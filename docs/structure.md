@@ -28,9 +28,9 @@ ocean-3d-platform/
 │
 ├── data/
 │   └── sample/                ← small demo dataset
-│       ├── arabian_sea_demo.nc
-│       ├── argo_demo_profiles.json
-│       └── glider_demo_track.json
+│       ├── arabian_sea_model.nc   ← CMEMS model (NetCDF)
+│       ├── arabian_sea_argo.nc    ← INCOIS Argo (NetCDF flat table)
+│       └── arabian_sea_glider.csv ← candidate underwater-platform (unverified as glider)
 │
 ├── docs/
 │   ├── API_CONTRACT.md        ← frontend ↔ backend agreement

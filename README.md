@@ -64,3 +64,11 @@ See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) for information on data provide
 ## API Documentation
 
 See [docs/API_CONTRACT.md](docs/API_CONTRACT.md) for the full API contract.
+
+## Project Status
+
+- **Backend:** FastAPI skeleton with `/health` only. API routers and the data-processing layer are not yet implemented.
+- **Frontend:** Scaffold only — `package.json` is currently missing, so the frontend cannot be built or run yet. Haseen handles the frontend separately.
+- **Testing:** No pytest configuration or tests yet; planned for a later backend phase.
+- **Docker:** Optional — `docker-compose.yml` is provided for reference, but the referenced Dockerfiles are not yet created and Docker is **not required** for local development.
+- **Datasets:** Real CMEMS model and INCOIS Argo subsets are present in `data/sample/`. `data/sample/arabian_sea_glider.csv` is a **candidate, unverified** glider/underwater-platform dataset — see [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) §C. The model file contains a **single timestep**; time-series animation requires additional temporal model data.

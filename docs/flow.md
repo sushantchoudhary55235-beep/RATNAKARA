@@ -177,6 +177,8 @@ Frontend                     Backend                     Data
 
 ## Time Animation Flow
 
+> **Note (Phase 1 verification):** The current prototype model file (`arabian_sea_model.nc`) contains a **single timestep (2026-06-23)**. Time-series animation is therefore **not supported with the current dataset** — it requires additional temporal model data. The architecture/API still exposes a `time` field so future multi-time files work without change.
+
 ```
 [User presses Play]
     │

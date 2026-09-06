@@ -1,3 +1,6 @@
+# NOTE: Docker support is OPTIONAL and not required for local development.
+# The backend/frontend Dockerfiles referenced below are not yet provided;
+# local development uses `uvicorn` and `npm` directly (see README).
 version: "3.8"
 
 services:

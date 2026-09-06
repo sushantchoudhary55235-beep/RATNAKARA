@@ -31,17 +31,12 @@ frontend/build/
 .DS_Store
 Thumbs.db
 
-# Data files (large)
+# Data files (large raw scientific datasets stay out of git)
 data/**/*.nc
 data/**/*.nc4
 data/**/*.grib
 data/**/*.grib2
+data/**/*.csv
 
 # Logs
 *.log
-
-data/sample/*.csv
-
-data/sample/*.csv
-
-data/sample/*.nc
