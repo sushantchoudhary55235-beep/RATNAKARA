@@ -40,3 +40,6 @@ data/**/*.csv
 
 # Logs
 *.log
+.env
+.env.*
+!.env.example

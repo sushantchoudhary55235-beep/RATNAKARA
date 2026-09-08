@@ -240,3 +240,52 @@ All errors return a JSON body with a `detail` field:
 | 404 | Requested valid data does not exist |
 | 422 | Request validation failure (missing required params, bad format) |
 | 500 | Unexpected internal failure |
+
+---
+
+### OceanAI Chat
+- **POST** `/api/v1/chat`
+- **Description:** AI-powered ocean science assistant powered by Google Gemini.
+  Answers questions about oceanography, marine observations, and ocean data.
+  Supports optional RATNAKAR data context for location-specific responses.
+- **Request Body:**
+
+```json
+{
+  "question": "What is ocean salinity?",
+  "context": {
+    "latitude": 18.5,
+    "longitude": 72.8,
+    "depth": 50,
+    "variable": "temperature"
+  }
+}
+```
+
+- **Fields:**
+  - `question` (string, required): User question (1-2000 chars, whitespace-stripped)
+  - `context` (object, optional): RATNAKAR data context
+    - `latitude` (float, optional): -90 to 90
+    - `longitude` (float, optional): -180 to 180
+    - `depth` (float, optional): depth in meters (≥ 0)
+    - `variable` (string, optional): ocean variable name
+
+- **Response (200):**
+
+```json
+{
+  "answer": "Ocean salinity is the concentration of dissolved salts in seawater..."
+}
+```
+
+- **Response fields:**
+  - `answer` (string): Gemini-generated answer
+
+- **Status codes:**
+  - 200 OK · 422 validation error · 500 Gemini API error or unavailable
+
+- **Notes:**
+  - The AI model is Google Gemini (default: gemini-3.8-flash)
+  - Context is optional; normal questions work without it
+  - The system prompt enforces scientific accuracy and language matching
+  - API key is managed server-side; never exposed in responses
