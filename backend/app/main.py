@@ -4,8 +4,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.anomalies import router as anomalies_router
+from app.api.comparison import router as comparison_router
 from app.api.metadata import router as metadata_router
 from app.api.model_field import router as model_field_router
+from app.api.observations import router as observations_router
 
 app = FastAPI(
     title="SAGARA Ocean Analytics API",
@@ -45,3 +48,6 @@ def health_check():
 # All application APIs except /health use the /api/v1 prefix.
 app.include_router(metadata_router, prefix="/api/v1")
 app.include_router(model_field_router, prefix="/api/v1")
+app.include_router(observations_router, prefix="/api/v1")
+app.include_router(comparison_router, prefix="/api/v1")
+app.include_router(anomalies_router, prefix="/api/v1")

@@ -186,21 +186,101 @@ The backend reads cached files and serves them via REST endpoints:
 
 | Endpoint | Description | Data Source |
 |----------|-------------|-------------|
-| `GET /api/model-field` | Ocean model grid data | `arabian_sea_model.nc` |
-| `GET /api/observations/argo` | Argo float profiles | `arabian_sea_argo.nc` |
-| `GET /api/observations/glider` | Candidate underwater-platform data (status pending verification) | `arabian_sea_glider.csv` |
-| `GET /api/comparison` | Model vs observation | Both |
-| `GET /api/anomalies` | Anomaly detection | Model + observations |
+| `GET /api/v1/model-field` | Ocean model grid data | `arabian_sea_model.nc` |
+| `GET /api/v1/observations` | Argo observations (QC-filtered, adjusted-preferred) | `arabian_sea_argo.nc` |
+| `GET /api/v1/comparison` | Model vs nearest valid Argo observation | Both |
+| `GET /api/v1/anomalies` | Prototype anomaly indicators (model vs observation) | Model + observations |
+
+> Glider serving is **reserved**: the candidate CSV's provenance is unverified, so
+> no glider observations are served (no fabricated data). `source=glider` returns 400.
 
 > Files are large (235–455 MB). The processing layer should load lazily / cache processed results in memory or on disk (e.g., Parquet) so per-request work stays small.
 
 ---
 
-## Step 8–11: Frontend Consumption, 3D Visualization, Comparison, Anomalies
+## Step 8: Model–Observation Matching (Comparison — implemented)
 
-(Unchanged from the original design: the frontend calls the REST endpoints, receives normalized JSON, and renders 3D layers; comparison finds the nearest model cell to an observation; anomaly analysis computes deviation from a baseline.)
+`GET /api/v1/comparison` matches a model grid point to the nearest valid Argo
+observation using a fully documented, deterministic nearest-neighbour strategy:
 
-> **Anomaly caveat:** the current model file has a single timestep, so time-based climatology is not possible with it. Anomaly analysis can initially operate on spatial deviation or model-vs-observation residuals; a proper climatological baseline requires additional temporal model data.
+1. **Model side** — reuses the Phase 3 processor: nearest model timestep and
+   depth level are selected, then the grid cell closest to the requested
+   lat/lon is read. Land-masked (NaN) cells raise a clear 404.
+2. **Observation side** — reuses the Phase 4 cached NumPy columns (no reload
+   per request, no Python loops over ~4M rows). Candidates must have valid
+   coordinates, a QC-passed value for the variable, and lie inside all matching
+   windows: Haversine distance ≤ `max_distance_km` (default 500 km),
+   |PRES − depth| ≤ `max_depth_diff` (default 100 dbar),
+   time difference ≤ `max_time_diff_days` (default 730 days).
+3. **Score** — `distance/max_distance + depth_diff/max_depth_diff +
+   time_diff/max_time_diff`; the minimum score wins (ties → lowest row index).
+   `distance_km`, `depth_difference` and `time_difference_days` are returned so
+   the frontend can explain WHY that observation was selected.
+4. **Difference** — `difference = model − observation` (plus its absolute value)
+   and a plain-language interpretation.
+
+### Matching limitations (explicit)
+- **Haversine spatial matching** (great-circle km) — never Euclidean degrees.
+- **Depth proxy:** Argo `depth` is the pressure (PRES/PRES_ADJUSTED) in dbar used
+  as a depth proxy; the requested depth is compared against the proxy directly.
+  No invented pressure→depth conversion formula is applied.
+- **Time tolerance:** the default 730 days reflects that the current model file
+  has a single timestep (2026-06-23) while the real Argo subset ends
+  2025-04-01. The selected observation's actual `time_difference_days` is always
+  exposed — large temporal offsets are never hidden.
+- **Current-variable limitation:** Argo provides temperature and salinity only;
+  `u_current`/`v_current` comparisons return a clear 400 (currents are never
+  fabricated).
+- **Prototype validation limitation:** this matching is a prototype analytical
+  comparison, NOT official INCOIS model validation, and no certified accuracy is
+  claimed.
+
+## Step 9: Anomaly Detection (Prototype Analytical Indicator — implemented)
+
+`GET /api/v1/anomalies` builds a **prototype analytical indicator** from
+model-observation differences:
+
+```
+Model (expected value)
+        ↓
+Argo observation (observed value, QC-passed, adjusted-preferred)
+        ↓
+vectorized nearest-grid matching (Phase 4 cached NumPy columns)
+        ↓
+difference = observed − expected   (absolute_difference = |difference|)
+        ↓
+prototype analytical threshold (temperature 2.0 °C, salinity 0.5 PSU — configurable)
+        ↓
+NORMAL (|difference| < threshold)  /  WARNING (|difference| >= threshold)
+```
+
+- **Reuse:** the model side uses the shared Phase 5 `get_model_surface`
+  lookup; the observation side reuses the Phase 4 cached NumPy columns via a
+  vectorized scan (`find_anomaly_candidates`) — no per-row Python loop over
+  ~4M rows, no dataset reload per request, results bounded (default 50, hard
+  cap 500) with deterministic stride downsampling and ordering.
+- **Filters:** `latitude`/`longitude` + `radius_km` (Haversine), `depth` +
+  `depth_tolerance` (pressure/depth proxy in dbar), `time` +
+  `time_tolerance_days`, `threshold`, `max_results`.
+- **Threshold:** a configurable **prototype analytical threshold** — NOT an
+  INCOIS-approved or scientifically validated value. The threshold actually
+  used is always exposed in the response (`threshold`, `threshold_type`).
+- **Status values:** `NORMAL` and `WARNING` only. No CRITICAL/DANGER/EMERGENCY
+  states exist because there is no scientific basis for them in this prototype.
+
+> **This is NOT official INCOIS warning logic.** The endpoint returns a
+> "SAGARA prototype analytical indicator" / "potential anomaly" based on the
+> model-observation difference. It is not an official warning, forecast,
+> certified anomaly detection, or operational disaster alert.
+
+> **Anomaly caveat:** the current model file has a single timestep, so
+> time-based climatology is not possible with it; the indicator is a
+> model-vs-observation residual, not a climatological anomaly. A proper
+> climatological baseline requires additional temporal model data.
+
+## Step 10–11: Frontend Consumption, 3D Visualization
+
+(Unchanged from the original design: the frontend calls the REST endpoints, receives normalized JSON, and renders 3D layers.)
 
 ---
 

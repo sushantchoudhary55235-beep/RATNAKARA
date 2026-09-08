@@ -83,6 +83,36 @@ Profiles are reconstructed by grouping `PLATFORM_NUMBER + CYCLE_NUMBER + DIRECTI
 
 > The original Argo file is **not modified**; QC filtering happens in the processing layer.
 
+### Argo serving (Phase 4 — implemented)
+- **Endpoint:** `GET /api/v1/observations` (see [API_CONTRACT.md](API_CONTRACT.md)).
+- **Variable preference:** `TEMP_ADJUSTED`, `PSAL_ADJUSTED`, `PRES_ADJUSTED` preferred;
+  raw `TEMP`, `PSAL`, `PRES` used as fallback when the adjusted value is missing/unusable.
+- **QC handling:** the dataset's own flags are used — for each measurement the
+  matching QC field (adjusted or raw, per the variable actually served) is applied;
+  flags **4 (bad)** and **9 (missing)** reject the value; flags 1–3 are kept.
+  No thresholds are invented and no values are fabricated; unusable measurements
+  are returned as `null`.
+- **Pressure/depth:** API `depth` is the Argo pressure in **dbar used as a depth
+  proxy** — it is NOT an exact geometric depth and no approximate conversion is applied.
+- **Missing file behaviour:** if `arabian_sea_argo.nc` is absent the backend still
+  starts and returns a clearly-marked `"mode": "demo"` payload (`"source": "demo"`);
+  demo observations are never mixed with real data.
+- **Performance:** only required columns are read; filtered numpy columns are cached
+  in-process; all filters are vectorized; responses are capped at 5000 observations
+  with deterministic stride downsampling.
+
+### Anomaly indicators (Phase 6 — derived data)
+- **Endpoint:** `GET /api/v1/anomalies`. Anomaly candidates are **derived** by
+  comparing the real local model values (`arabian_sea_model.nc`) against real
+  QC-passed Argo observations (`arabian_sea_argo.nc`); no third data source and
+  no synthetic values are involved.
+- The **threshold** is a configurable **prototype analytical threshold**
+  (defaults: temperature 2.0 °C, salinity 0.5 PSU) — it is NOT an
+  INCOIS-approved or scientifically validated value, and the results are
+  **prototype analytical indicators**, not official INCOIS warnings.
+- Land-masked model cells are skipped; pairs without a valid value on either
+  side are never fabricated.
+
 ---
 
 ## C. Underwater-Platform Observations (Candidate Glider)
