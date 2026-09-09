@@ -21,10 +21,8 @@ body {
     "Segoe UI",
     Arial,
     sans-serif;
-
   background: #020b14;
   color: #17324d;
-
   overflow: hidden;
 }
 
@@ -37,7 +35,6 @@ button {
   cursor: pointer;
 }
 
-
 /* ============================================================
    APPLICATION
 ============================================================ */
@@ -49,33 +46,22 @@ button {
   position: relative;
 }
 
-
 /* ============================================================
    HEADER
 ============================================================ */
 
 .header {
   height: 86px;
-
   display: flex;
   align-items: center;
   justify-content: space-between;
-
   padding: 0 32px;
-
-  background:
-    rgba(255, 255, 255, 0.96);
-
-  border-bottom:
-    1px solid rgba(23, 50, 77, 0.12);
-
-  box-shadow:
-    0 2px 14px rgba(23, 50, 77, 0.08);
-
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid rgba(23, 50, 77, 0.12);
+  box-shadow: 0 2px 14px rgba(23, 50, 77, 0.08);
   position: relative;
   z-index: 50;
 }
-
 
 /* ============================================================
    BRAND
@@ -89,13 +75,10 @@ button {
 
 .brand h1 {
   margin: 0;
-
   font-size: 29px;
   line-height: 1;
-
   font-weight: 750;
   letter-spacing: 4px;
-
   background:
     linear-gradient(
       90deg,
@@ -103,22 +86,17 @@ button {
       #078b8c,
       #20b486
     );
-
   -webkit-background-clip: text;
   background-clip: text;
-
   -webkit-text-fill-color: transparent;
 }
 
 .brand p {
   margin: 7px 0 0;
-
   font-size: 14px;
   color: #087e8b;
-
   letter-spacing: 0.2px;
 }
-
 
 /* ============================================================
    TOP NAVIGATION
@@ -132,21 +110,12 @@ button {
 
 .header nav button {
   height: 48px;
-
   padding: 0 19px;
-
   border-radius: 12px;
-
-  border:
-    1px solid rgba(23, 50, 77, 0.14);
-
-  background:
-    rgba(255, 255, 255, 0.95);
-
+  border: 1px solid rgba(23, 50, 77, 0.14);
+  background: rgba(255, 255, 255, 0.95);
   color: #123f5d;
-
   font-size: 15px;
-
   transition:
     background 0.2s ease,
     border-color 0.2s ease,
@@ -156,12 +125,9 @@ button {
 
 .header nav button:hover {
   background: #eef9fa;
-
   border-color: #75cbd2;
-
   box-shadow:
     0 4px 14px rgba(8, 126, 139, 0.12);
-
   transform: translateY(-1px);
 }
 
@@ -169,22 +135,17 @@ button {
   transform: translateY(0);
 }
 
-
 /* ============================================================
    MAIN OCEAN VIEW
 ============================================================ */
 
 .ocean-view {
   position: relative;
-
   width: 100%;
   height: calc(100vh - 86px);
-
   overflow: hidden;
-
   background: #020b14;
 }
-
 
 /* ============================================================
    THREE.JS CANVAS
@@ -192,13 +153,10 @@ button {
 
 .ocean-view canvas {
   display: block;
-
   width: 100% !important;
   height: 100% !important;
-
   outline: none;
 }
-
 
 /* ============================================================
    LEFT MENU BUTTON
@@ -206,30 +164,22 @@ button {
 
 .panel-toggle {
   position: absolute;
-
   left: 14px;
   top: 20px;
-
   width: 44px;
   height: 44px;
-
   padding: 0;
 
   display: flex;
   flex-direction: column;
-
   justify-content: center;
   align-items: center;
-
   gap: 5px;
 
   border-radius: 50%;
+  border: 1px solid rgba(8, 126, 139, 0.20);
 
-  border:
-    1px solid rgba(8, 126, 139, 0.20);
-
-  background:
-    rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.94);
 
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -249,28 +199,22 @@ button {
 
 .panel-toggle:hover {
   background: #ffffff;
-
   box-shadow:
     0 7px 22px rgba(0, 0, 0, 0.28);
-
   transform: translateY(-1px);
 }
 
 .panel-toggle span {
   width: 22px;
   height: 3px;
-
   border-radius: 4px;
-
   background: #087e8b;
-
   display: block;
 
   transition:
     transform 0.25s ease,
     opacity 0.2s ease;
 }
-
 
 /* ============================================================
    OPEN BUTTON
@@ -296,30 +240,25 @@ button {
     rotate(-45deg);
 }
 
-
 /* ============================================================
-   FIRST JSX LEFT OCEAN PANEL
+   LEFT OCEAN PANEL
 ============================================================ */
 
 .ocean-panel {
   position: absolute;
-
   top: 22px;
   left: 25px;
-
   width: 265px;
+  padding: 14px;
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
 
-  padding: 18px;
-
-  background:
-    rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.92);
 
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
 
-  border:
-    1px solid rgba(23, 50, 77, 0.12);
-
+  border: 1px solid rgba(23, 50, 77, 0.12);
   border-radius: 15px;
 
   box-shadow:
@@ -328,7 +267,6 @@ button {
   z-index: 20;
 
   transform: translateX(-320px);
-
   opacity: 0;
 
   transition:
@@ -338,19 +276,15 @@ button {
   pointer-events: none;
 }
 
-
 /* ============================================================
    PANEL OPEN
 ============================================================ */
 
 .ocean-panel.visible {
   transform: translateX(0);
-
   opacity: 1;
-
   pointer-events: auto;
 }
-
 
 /* ============================================================
    PANEL HEADER
@@ -358,26 +292,21 @@ button {
 
 .panel-header {
   display: flex;
-
   align-items: center;
   justify-content: space-between;
 
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 
   font-size: 12px;
-
   font-weight: 700;
-
   letter-spacing: 1.5px;
 
-  color: #17324d;
+  color: #17374d;
 }
 
 .panel-header > div {
   display: flex;
-
   align-items: center;
-
   gap: 8px;
 }
 
@@ -386,50 +315,43 @@ button {
   height: 7px;
 
   background: #20b486;
-
   border-radius: 50%;
 
   box-shadow:
     0 0 8px rgba(32, 180, 134, 0.5);
 }
 
-
 /* ============================================================
    PANEL SEARCH
-============================================================ */
-
-.panel-search {
-  height: 34px;
+============================================================ */.panel-search {
+  height: 30px;
 
   display: flex;
-
   align-items: center;
-
   gap: 7px;
 
   padding: 0 10px;
-
   background: #edf5f7;
 
-  border:
-    1px solid rgba(23, 50, 77, 0.08);
-
+  border: 1px solid rgba(23, 50, 77, 0.08);
   border-radius: 8px;
 
   color: #7a929f;
-
   font-size: 11px;
 
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .panel-search input {
   width: 100%;
   min-width: 0;
+
   border: 0;
   outline: none;
+
   background: transparent;
   color: #17324d;
+
   font-size: 11px;
 }
 
@@ -437,23 +359,19 @@ button {
   color: #7a929f;
 }
 
-
 /* ============================================================
    PANEL SECTION TITLE
 ============================================================ */
 
 .panel-section-title {
-  margin-bottom: 9px;
+  margin-bottom: 6px;
 
   color: #66818e;
 
   font-size: 9px;
-
   font-weight: 700;
-
   letter-spacing: 1.4px;
 }
-
 
 /* ============================================================
    LAYER BUTTON
@@ -463,33 +381,27 @@ button {
   width: 100%;
 
   display: flex;
-
   align-items: center;
+  gap: 10px;
 
-  gap: 11px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
 
-  padding: 10px;
-
-  margin-bottom: 6px;
-
-  border:
-    1px solid transparent;
-
+  border: 1px solid transparent;
   border-radius: 9px;
 
   background: transparent;
-
   color: #17324d;
 
   text-align: left;
-
   cursor: pointer;
 
   transition:
     background 0.2s ease,
-    border 0.2s ease,
+    border-color 0.2s ease,
     transform 0.2s ease,
-    box-shadow 0.2s ease;
+    box-shadow 0.2s ease,
+    color 0.2s ease;
 }
 
 .layer-button:hover {
@@ -511,25 +423,22 @@ button {
     rgba(8, 126, 139, 0.22);
 }
 
-
 /* ============================================================
    LAYER ICON
-============================================================ */
+============================================================ */.layer-icon {
+  width: 28px;
+  height: 28px;
 
-.layer-icon {
-  width: 31px;
-  height: 31px;
+  flex: 0 0 28px;
 
   display: flex;
-
   align-items: center;
   justify-content: center;
 
   background: #edf7f8;
 
   border-radius: 8px;
-
-  font-size: 15px;
+  font-size: 14px;
 
   transition:
     background 0.2s ease,
@@ -544,7 +453,6 @@ button {
   transform: scale(1.05);
 }
 
-
 /* ============================================================
    LAYER TEXT
 ============================================================ */
@@ -553,7 +461,6 @@ button {
   display: block;
 
   font-size: 12px;
-
   font-weight: 600;
 
   margin-bottom: 2px;
@@ -567,7 +474,6 @@ button {
   color: #78909c;
 }
 
-
 /* ============================================================
    PANEL DIVIDER
 ============================================================ */
@@ -578,9 +484,8 @@ button {
   background:
     rgba(23, 50, 77, 0.09);
 
-  margin: 15px 0;
+  margin: 10px 0;
 }
-
 
 /* ============================================================
    DEPTH
@@ -588,24 +493,19 @@ button {
 
 .depth-values {
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
 
   margin-bottom: 8px;
 
   font-size: 11px;
-
   color: #718994;
 }
 
 .depth-values strong {
   color: #087e8b;
-
   font-size: 12px;
 }
-
 
 /* ============================================================
    DEPTH SLIDER
@@ -613,7 +513,6 @@ button {
 
 .depth-slider {
   width: 100%;
-
   margin: 3px 0;
 
   accent-color: #087e8b;
@@ -621,28 +520,378 @@ button {
   cursor: pointer;
 }
 
-
 /* ============================================================
    DEPTH LABELS
 ============================================================ */
 
 .depth-labels {
   display: flex;
-
   justify-content: space-between;
 
   color: #8aa0aa;
-
   font-size: 9px;
 }
 
+/* ============================================================
+   RATNAKARA THEME SWITCH
+============================================================ */
+
+.theme-switch-wrap {
+  margin-left: auto;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-switch {
+  width: 58px;
+  height: 32px;
+
+  border-radius: 999px;
+
+  border: 1px solid rgba(255, 255, 255, 0.22);
+
+  background: rgba(8, 12, 18, 0.82);
+
+  display: flex;
+  align-items: center;
+
+  padding: 4px;
+
+  cursor: pointer;
+
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.theme-switch.light {
+  background: rgba(235, 248, 255, 0.92);
+
+  border-color:
+    rgba(22, 135, 201, 0.35);
+
+  box-shadow:
+    0 0 14px rgba(22, 135, 201, 0.16);
+}
+
+.theme-switch-dot {
+  width: 22px;
+  height: 22px;
+
+  border-radius: 50%;
+
+  display: block;
+
+  transition:
+    transform 0.3s ease,
+    background 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.dark-dot {
+  background: #000000;
+
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16);
+
+  transform: translateX(0);
+}
+
+.light-dot {
+  background: #1687c9;
+
+  box-shadow:
+    0 0 10px rgba(22, 135, 201, 0.48);
+
+  transform: translateX(26px);
+}
+
+/* ============================================================
+   DARK THEME
+   SLEEK OCEAN LAYERS SIDEBAR
+============================================================ */
+
+.app.dark-mode {
+  background: #02070d;
+}
+
+.app.dark-mode .header {
+  background:
+    rgba(0, 0, 0, 0.82);
+
+  color: #ffffff;
+}
+
+.app.dark-mode .ocean-panel {
+  background:
+    rgba(15, 23, 42, 0.97);
+
+  color: #ffffff;
+
+  border-color:
+    rgba(148, 163, 184, 0.18);
+
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.42);
+}
+
+/* Dark panel header */
+
+.app.dark-mode .panel-header {
+  color: #ffffff;
+}
+
+.app.dark-mode .panel-section-title {
+  color: #cbd5e1;
+}
+
+/* Dark search */
+
+.app.dark-mode .panel-search {
+  background:
+    rgba(30, 41, 59, 0.96);
+
+  border-color:
+    rgba(148, 163, 184, 0.18);
+
+  color: #cbd5e1;
+}
+
+.app.dark-mode .panel-search input {
+  color: #ffffff;
+}
+
+.app.dark-mode .panel-search input::placeholder {
+  color: #94a3b8;
+}
+
+/* Dark layer buttons */
+
+.app.dark-mode .layer-button {
+  background:
+    rgba(30, 41, 59, 0.72);
+
+  color: #ffffff;
+
+  border-color:
+    rgba(148, 163, 184, 0.12);
+
+  box-shadow: none;
+}
+
+.app.dark-mode .layer-button:hover {
+  background:
+    rgba(51, 65, 85, 0.94);
+
+  border-color:
+    rgba(148, 163, 184, 0.30);
+
+  color: #ffffff;
+
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.22);
+}
+
+/*
+   IMPORTANT:
+   Selected ocean variable becomes solid white
+   with black text, exactly as requested.
+*/
+
+.app.dark-mode .layer-button.selected {
+  background: #ffffff;
+
+  color: #000000;
+
+  border-color: #ffffff;
+
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.app.dark-mode .layer-button.selected strong {
+  color: #000000;
+}
+
+.app.dark-mode .layer-button.selected small {
+  color: #334155;
+}
+
+/* Dark layer icons */
+
+.app.dark-mode .layer-icon {
+  background:
+    rgba(15, 23, 42, 0.95);
+
+  border:
+    1px solid rgba(148, 163, 184, 0.12);
+}
+
+.app.dark-mode .layer-button.selected .layer-icon {
+  background:
+    #f1f5f9;
+
+  border-color:
+    rgba(15, 23, 42, 0.12);
+}
+
+/* Dark panel divider */
+
+.app.dark-mode .panel-divider {
+  background:
+    rgba(148, 163, 184, 0.16);
+}
+
+/* Dark depth */
+
+.app.dark-mode .depth-values {
+  color: #cbd5e1;
+}
+
+.app.dark-mode .depth-values strong {
+  color: #ffffff;
+}
+
+.app.dark-mode .depth-labels {
+  color: #94a3b8;
+}
+
+.app.dark-mode .depth-slider {
+  accent-color: #ffffff;
+}
+
+/* Dark menu button */
+
+.app.dark-mode .panel-toggle {
+  background:
+    rgba(15, 23, 42, 0.94);
+
+  border-color:
+    rgba(148, 163, 184, 0.22);
+}
+
+.app.dark-mode .panel-toggle:hover {
+  background:
+    rgba(30, 41, 59, 0.98);
+}
+
+.app.dark-mode .panel-toggle span {
+  background: #ffffff;
+}
+
+/* ============================================================
+   LIGHT THEME
+============================================================ */
+
+.app.light-mode {
+  background: #dff5fc;
+  color: #102a36;
+}
+
+.app.light-mode .header {
+  background:
+    rgba(246, 252, 255, 0.92);
+
+  color: #102a36;
+
+  border-bottom-color:
+    rgba(22, 135, 201, 0.16);
+
+  box-shadow:
+    0 2px 18px rgba(22, 135, 201, 0.10);
+}
+
+.app.light-mode .brand h1 {
+  color: #123d4b;
+}
+
+.app.light-mode .brand p {
+  color: #52717c;
+}
+
+.app.light-mode nav button {
+  color: #174758;
+
+  background:
+    rgba(255, 255, 255, 0.68);
+}
+
+.app.light-mode .ocean-panel {
+  background:
+    rgba(248, 253, 255, 0.94);
+
+  color: #163743;
+
+  border-color:
+    rgba(22, 135, 201, 0.16);
+
+  box-shadow:
+    0 12px 35px rgba(22, 135, 201, 0.14);
+}
+
+.app.light-mode .panel-section-title,
+.app.light-mode .panel-header {
+  color: #315663;
+}
+
+.app.light-mode .panel-search {
+  background:
+    rgba(225, 243, 249, 0.92);
+
+  border-color:
+    rgba(22, 135, 201, 0.16);
+}
+
+.app.light-mode .panel-search input {
+  color: #163743;
+}
+
+.app.light-mode .panel-search input::placeholder {
+  color: #6d8992;
+}
+
+.app.light-mode .layer-button {
+  color: #183d49;
+
+  background:
+    rgba(255, 255, 255, 0.55);
+}
+
+.app.light-mode .layer-button:hover {
+  background:
+    rgba(220, 243, 250, 0.9);
+}
+
+.app.light-mode .layer-button.selected {
+  background:
+    rgba(196, 235, 247, 0.92);
+
+  border-color:
+    rgba(22, 135, 201, 0.45);
+}
+
+.app.light-mode .layer-button small {
+  color: #63818b;
+}
+
+.app.light-mode .depth-values {
+  color: #244a57;
+}
+
+.app.light-mode .depth-labels {
+  color: #66838d;
+}
 
 /* ============================================================
    RESPONSIVE
 ============================================================ */
 
 @media (max-width: 800px) {
-
   .header {
     height: 72px;
     padding: 0 15px;
@@ -663,9 +912,7 @@ button {
 
   .header nav button {
     height: 38px;
-
     padding: 0 9px;
-
     font-size: 11px;
   }
 
@@ -680,13 +927,11 @@ button {
   }
 }
 
-
 /* ============================================================
    SMALL MOBILE
 ============================================================ */
 
 @media (max-width: 560px) {
-
   .header {
     height: 68px;
   }
@@ -710,5 +955,75 @@ button {
 
   .ocean-panel {
     width: 280px;
+  }
+}
+/* ============================================================
+   LIVE LAT / LON BAR
+============================================================ */
+
+.coordinate-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  padding: 8px 16px;
+
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  border: 1px solid rgba(23, 50, 77, 0.12);
+  border-radius: 10px;
+
+  box-shadow: 0 4px 16px rgba(23, 50, 77, 0.12);
+
+  z-index: 30;
+
+  pointer-events: none;
+
+  font-family: Arial, sans-serif;
+}
+
+.coordinate-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.coordinate-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #087e8b;
+}
+
+.coordinate-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #17324d;
+  min-width: 52px;
+}
+
+.coordinate-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(23, 50, 77, 0.16);
+}
+
+@media (max-width: 600px) {
+  .coordinate-bar {
+    bottom: 12px;
+    padding: 7px 12px;
+    gap: 10px;
+  }
+
+  .coordinate-value {
+    font-size: 11px;
+    min-width: 48px;
   }
 }
