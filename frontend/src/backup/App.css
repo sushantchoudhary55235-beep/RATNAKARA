@@ -1,0 +1,495 @@
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background: #eaf3f7;
+  color: #17324d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ============================================================
+   MAIN APP
+============================================================ */
+
+.app {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ============================================================
+   HEADER
+============================================================ */
+
+.header {
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 35px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(23, 50, 77, 0.12);
+  box-shadow: 0 2px 10px rgba(23, 50, 77, 0.05);
+}
+
+/* ============================================================
+   RATNAKARA LOGO
+============================================================ */
+
+.header h1 {
+  margin: 0;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 3px;
+
+  /* BLUE → TEAL → GREEN */
+  background: linear-gradient(
+    90deg,
+    #064e6b,
+    #078b8c,
+    #20b486
+  );
+
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ============================================================
+   SUBTITLE
+============================================================ */
+
+.header p {
+  margin: 3px 0 0;
+  color: #087e8b;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+
+/* ============================================================
+   NAVIGATION
+============================================================ */
+
+.header nav {
+  display: flex;
+  gap: 10px;
+}
+
+/* ============================================================
+   NAVIGATION BUTTONS
+============================================================ */
+
+.header button {
+  border: 1px solid rgba(7, 59, 102, 0.15);
+  background: rgba(255, 255, 255, 0.75);
+  color: #073b66;
+  padding: 10px 15px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease,
+    border-color 0.2s ease;
+}
+
+/* ============================================================
+   BUTTON HOVER
+============================================================ */
+
+.header button:hover {
+  background: #dff4f6;
+  color: #075b78;
+  border-color: rgba(7, 91, 120, 0.25);
+  transform: translateY(-1px);
+}
+
+/* ============================================================
+   3D OCEAN VIEW
+============================================================ */
+
+.ocean-view {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 80px);
+}
+
+/* ============================================================
+   LEFT OCEAN PANEL
+============================================================ */
+
+.ocean-panel {
+  position: absolute;
+  top: 22px;
+  left: 25px;
+  width: 265px;
+  padding: 18px;
+
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+
+  border: 1px solid rgba(23, 50, 77, 0.12);
+  border-radius: 15px;
+
+  box-shadow:
+    0 10px 30px rgba(23, 50, 77, 0.14);
+
+  z-index: 20;
+
+  /* Hidden initially */
+  transform: translateX(-320px);
+  opacity: 0;
+
+  transition:
+    transform 0.45s ease,
+    opacity 0.35s ease;
+
+  pointer-events: none;
+}
+
+.ocean-panel.visible {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ============================================================
+   PANEL HEADER
+============================================================ */
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #17324d;
+}
+
+.panel-header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-dot {
+  width: 7px;
+  height: 7px;
+  background: #20b486;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(32, 180, 134, 0.5);
+}
+
+/* ============================================================
+   SEARCH
+============================================================ */
+
+.panel-search {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+
+  background: #edf5f7;
+  border: 1px solid rgba(23, 50, 77, 0.08);
+  border-radius: 8px;
+
+  color: #7a929f;
+  font-size: 11px;
+  margin-bottom: 18px;
+}
+
+/* ============================================================
+   SECTION TITLES
+============================================================ */
+
+.panel-section-title {
+  margin-bottom: 9px;
+  color: #66818e;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+}
+
+/* ============================================================
+   LAYER BUTTONS
+============================================================ */
+
+.layer-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+
+  padding: 10px;
+  margin-bottom: 6px;
+
+  border: 1px solid transparent;
+  border-radius: 9px;
+
+  background: transparent;
+  color: #17324d;
+
+  text-align: left;
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    border 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+/* HOVER EFFECT */
+
+.layer-button:hover {
+  background: #e8f5f7;
+  border-color: rgba(8, 126, 139, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 12px rgba(23, 50, 77, 0.08);
+}
+
+/* SELECTED BUTTON */
+
+.layer-button.selected {
+  background: #dff2f4;
+  border-color: rgba(8, 126, 139, 0.22);
+}
+
+/* ============================================================
+   LAYER ICON
+============================================================ */
+
+.layer-icon {
+  width: 31px;
+  height: 31px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: #edf7f8;
+  border-radius: 8px;
+
+  font-size: 15px;
+
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+/* FIX: KEEP ICON BOX LIGHT EVEN WHEN SELECTED */
+
+.layer-button.selected .layer-icon {
+  background: #edf7f8;
+}
+
+/* Slight icon movement on hover */
+
+.layer-button:hover .layer-icon {
+  transform: scale(1.05);
+}
+
+/* ============================================================
+   LAYER TEXT
+============================================================ */
+
+.layer-button strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.layer-button small {
+  display: block;
+  font-size: 9px;
+  color: #78909c;
+}
+
+/* ============================================================
+   DIVIDER
+============================================================ */
+
+.panel-divider {
+  height: 1px;
+  background: rgba(23, 50, 77, 0.09);
+  margin: 15px 0;
+}
+
+/* ============================================================
+   DEPTH
+============================================================ */
+
+.depth-values {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+
+  font-size: 11px;
+  color: #718994;
+}
+
+.depth-values strong {
+  color: #087e8b;
+  font-size: 12px;
+}
+
+/* ============================================================
+   SLIDER
+============================================================ */
+
+.depth-slider {
+  width: 100%;
+  margin: 3px 0;
+  accent-color: #087e8b;
+  cursor: pointer;
+}
+
+.depth-labels {
+  display: flex;
+  justify-content: space-between;
+  color: #8aa0aa;
+  font-size: 9px;
+}
+
+/* ============================================================
+   PANEL TOGGLE
+============================================================ */
+
+.panel-toggle {
+  position: absolute;
+  top: 22px;
+  left: 12px;
+  width: 44px;
+  height: 44px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+
+  border: 1px solid rgba(8, 126, 139, 0.20);
+  border-radius: 50%;
+
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+
+  box-shadow: 0 5px 18px rgba(23, 50, 77, 0.14);
+
+  cursor: pointer;
+  z-index: 30;
+}
+
+.panel-toggle span {
+  width: 18px;
+  height: 2.5px;
+  background: #087e8b;
+  border-radius: 3px;
+
+  transition:
+    transform 0.3s ease,
+    opacity 0.25s ease;
+}
+
+.panel-toggle.open span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+
+.panel-toggle.open span:nth-child(2) {
+  opacity: 0;
+}
+
+.panel-toggle.open span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+/* ============================================================
+   ARCGIS GLOBE
+============================================================ */
+
+.arcgis-globe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* Keep ArcGIS controls clean and unobtrusive */
+
+.arcgis-globe .esri-ui {
+  font-family: Arial, sans-serif;
+}
+
+.arcgis-globe .esri-widget {
+  border-radius: 10px;
+}
+
+.arcgis-globe .esri-navigation-toggle {
+  border-radius: 10px;
+}
+
+/* ============================================================
+   GLOBE STATUS
+============================================================ */
+
+.globe-status {
+  position: absolute;
+  right: 24px;
+  bottom: 22px;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 9px 13px;
+
+  background: rgba(255, 255, 255, 0.90);
+  backdrop-filter: blur(12px);
+
+  border: 1px solid rgba(23, 50, 77, 0.10);
+  border-radius: 10px;
+
+  box-shadow: 0 6px 20px rgba(23, 50, 77, 0.12);
+
+  color: #66818e;
+  font-size: 10px;
+
+  z-index: 10;
+}
+
+.globe-status strong {
+  color: #087e8b;
+  font-size: 10px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #20b486;
+  box-shadow: 0 0 7px rgba(32, 180, 134, 0.45);
+}
+
+.status-separator {
+  color: #b0bec5;
+}

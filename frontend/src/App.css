@@ -1,0 +1,714 @@
+/* ============================================================
+   RATNAKARA - MAIN UI
+============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    Inter,
+    "Segoe UI",
+    Arial,
+    sans-serif;
+
+  background: #020b14;
+  color: #17324d;
+
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+
+/* ============================================================
+   APPLICATION
+============================================================ */
+
+.app {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+
+/* ============================================================
+   HEADER
+============================================================ */
+
+.header {
+  height: 86px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0 32px;
+
+  background:
+    rgba(255, 255, 255, 0.96);
+
+  border-bottom:
+    1px solid rgba(23, 50, 77, 0.12);
+
+  box-shadow:
+    0 2px 14px rgba(23, 50, 77, 0.08);
+
+  position: relative;
+  z-index: 50;
+}
+
+
+/* ============================================================
+   BRAND
+============================================================ */
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.brand h1 {
+  margin: 0;
+
+  font-size: 29px;
+  line-height: 1;
+
+  font-weight: 750;
+  letter-spacing: 4px;
+
+  background:
+    linear-gradient(
+      90deg,
+      #064e6b,
+      #078b8c,
+      #20b486
+    );
+
+  -webkit-background-clip: text;
+  background-clip: text;
+
+  -webkit-text-fill-color: transparent;
+}
+
+.brand p {
+  margin: 7px 0 0;
+
+  font-size: 14px;
+  color: #087e8b;
+
+  letter-spacing: 0.2px;
+}
+
+
+/* ============================================================
+   TOP NAVIGATION
+============================================================ */
+
+.header nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header nav button {
+  height: 48px;
+
+  padding: 0 19px;
+
+  border-radius: 12px;
+
+  border:
+    1px solid rgba(23, 50, 77, 0.14);
+
+  background:
+    rgba(255, 255, 255, 0.95);
+
+  color: #123f5d;
+
+  font-size: 15px;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.header nav button:hover {
+  background: #eef9fa;
+
+  border-color: #75cbd2;
+
+  box-shadow:
+    0 4px 14px rgba(8, 126, 139, 0.12);
+
+  transform: translateY(-1px);
+}
+
+.header nav button:active {
+  transform: translateY(0);
+}
+
+
+/* ============================================================
+   MAIN OCEAN VIEW
+============================================================ */
+
+.ocean-view {
+  position: relative;
+
+  width: 100%;
+  height: calc(100vh - 86px);
+
+  overflow: hidden;
+
+  background: #020b14;
+}
+
+
+/* ============================================================
+   THREE.JS CANVAS
+============================================================ */
+
+.ocean-view canvas {
+  display: block;
+
+  width: 100% !important;
+  height: 100% !important;
+
+  outline: none;
+}
+
+
+/* ============================================================
+   LEFT MENU BUTTON
+============================================================ */
+
+.panel-toggle {
+  position: absolute;
+
+  left: 14px;
+  top: 20px;
+
+  width: 44px;
+  height: 44px;
+
+  padding: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  justify-content: center;
+  align-items: center;
+
+  gap: 5px;
+
+  border-radius: 50%;
+
+  border:
+    1px solid rgba(8, 126, 139, 0.20);
+
+  background:
+    rgba(255, 255, 255, 0.94);
+
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  box-shadow:
+    0 5px 18px rgba(0, 0, 0, 0.22);
+
+  z-index: 40;
+
+  transition:
+    width 0.25s ease,
+    height 0.25s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.panel-toggle:hover {
+  background: #ffffff;
+
+  box-shadow:
+    0 7px 22px rgba(0, 0, 0, 0.28);
+
+  transform: translateY(-1px);
+}
+
+.panel-toggle span {
+  width: 22px;
+  height: 3px;
+
+  border-radius: 4px;
+
+  background: #087e8b;
+
+  display: block;
+
+  transition:
+    transform 0.25s ease,
+    opacity 0.2s ease;
+}
+
+
+/* ============================================================
+   OPEN BUTTON
+============================================================ */
+
+.panel-toggle.open {
+  border-radius: 12px;
+}
+
+.panel-toggle.open span:nth-child(1) {
+  transform:
+    translateY(8px)
+    rotate(45deg);
+}
+
+.panel-toggle.open span:nth-child(2) {
+  opacity: 0;
+}
+
+.panel-toggle.open span:nth-child(3) {
+  transform:
+    translateY(-8px)
+    rotate(-45deg);
+}
+
+
+/* ============================================================
+   FIRST JSX LEFT OCEAN PANEL
+============================================================ */
+
+.ocean-panel {
+  position: absolute;
+
+  top: 22px;
+  left: 25px;
+
+  width: 265px;
+
+  padding: 18px;
+
+  background:
+    rgba(255, 255, 255, 0.92);
+
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+
+  border:
+    1px solid rgba(23, 50, 77, 0.12);
+
+  border-radius: 15px;
+
+  box-shadow:
+    0 10px 30px rgba(23, 50, 77, 0.14);
+
+  z-index: 20;
+
+  transform: translateX(-320px);
+
+  opacity: 0;
+
+  transition:
+    transform 0.45s ease,
+    opacity 0.35s ease;
+
+  pointer-events: none;
+}
+
+
+/* ============================================================
+   PANEL OPEN
+============================================================ */
+
+.ocean-panel.visible {
+  transform: translateX(0);
+
+  opacity: 1;
+
+  pointer-events: auto;
+}
+
+
+/* ============================================================
+   PANEL HEADER
+============================================================ */
+
+.panel-header {
+  display: flex;
+
+  align-items: center;
+  justify-content: space-between;
+
+  margin-bottom: 14px;
+
+  font-size: 12px;
+
+  font-weight: 700;
+
+  letter-spacing: 1.5px;
+
+  color: #17324d;
+}
+
+.panel-header > div {
+  display: flex;
+
+  align-items: center;
+
+  gap: 8px;
+}
+
+.panel-dot {
+  width: 7px;
+  height: 7px;
+
+  background: #20b486;
+
+  border-radius: 50%;
+
+  box-shadow:
+    0 0 8px rgba(32, 180, 134, 0.5);
+}
+
+
+/* ============================================================
+   PANEL SEARCH
+============================================================ */
+
+.panel-search {
+  height: 34px;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 7px;
+
+  padding: 0 10px;
+
+  background: #edf5f7;
+
+  border:
+    1px solid rgba(23, 50, 77, 0.08);
+
+  border-radius: 8px;
+
+  color: #7a929f;
+
+  font-size: 11px;
+
+  margin-bottom: 18px;
+}
+
+.panel-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #17324d;
+  font-size: 11px;
+}
+
+.panel-search input::placeholder {
+  color: #7a929f;
+}
+
+
+/* ============================================================
+   PANEL SECTION TITLE
+============================================================ */
+
+.panel-section-title {
+  margin-bottom: 9px;
+
+  color: #66818e;
+
+  font-size: 9px;
+
+  font-weight: 700;
+
+  letter-spacing: 1.4px;
+}
+
+
+/* ============================================================
+   LAYER BUTTON
+============================================================ */
+
+.layer-button {
+  width: 100%;
+
+  display: flex;
+
+  align-items: center;
+
+  gap: 11px;
+
+  padding: 10px;
+
+  margin-bottom: 6px;
+
+  border:
+    1px solid transparent;
+
+  border-radius: 9px;
+
+  background: transparent;
+
+  color: #17324d;
+
+  text-align: left;
+
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    border 0.2s ease,
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.layer-button:hover {
+  background: #e8f5f7;
+
+  border-color:
+    rgba(8, 126, 139, 0.15);
+
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 5px 12px rgba(23, 50, 77, 0.08);
+}
+
+.layer-button.selected {
+  background: #dff2f4;
+
+  border-color:
+    rgba(8, 126, 139, 0.22);
+}
+
+
+/* ============================================================
+   LAYER ICON
+============================================================ */
+
+.layer-icon {
+  width: 31px;
+  height: 31px;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  background: #edf7f8;
+
+  border-radius: 8px;
+
+  font-size: 15px;
+
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.layer-button.selected .layer-icon {
+  background: #edf7f8;
+}
+
+.layer-button:hover .layer-icon {
+  transform: scale(1.05);
+}
+
+
+/* ============================================================
+   LAYER TEXT
+============================================================ */
+
+.layer-button strong {
+  display: block;
+
+  font-size: 12px;
+
+  font-weight: 600;
+
+  margin-bottom: 2px;
+}
+
+.layer-button small {
+  display: block;
+
+  font-size: 9px;
+
+  color: #78909c;
+}
+
+
+/* ============================================================
+   PANEL DIVIDER
+============================================================ */
+
+.panel-divider {
+  height: 1px;
+
+  background:
+    rgba(23, 50, 77, 0.09);
+
+  margin: 15px 0;
+}
+
+
+/* ============================================================
+   DEPTH
+============================================================ */
+
+.depth-values {
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  margin-bottom: 8px;
+
+  font-size: 11px;
+
+  color: #718994;
+}
+
+.depth-values strong {
+  color: #087e8b;
+
+  font-size: 12px;
+}
+
+
+/* ============================================================
+   DEPTH SLIDER
+============================================================ */
+
+.depth-slider {
+  width: 100%;
+
+  margin: 3px 0;
+
+  accent-color: #087e8b;
+
+  cursor: pointer;
+}
+
+
+/* ============================================================
+   DEPTH LABELS
+============================================================ */
+
+.depth-labels {
+  display: flex;
+
+  justify-content: space-between;
+
+  color: #8aa0aa;
+
+  font-size: 9px;
+}
+
+
+/* ============================================================
+   RESPONSIVE
+============================================================ */
+
+@media (max-width: 800px) {
+
+  .header {
+    height: 72px;
+    padding: 0 15px;
+  }
+
+  .brand h1 {
+    font-size: 22px;
+    letter-spacing: 3px;
+  }
+
+  .brand p {
+    font-size: 11px;
+  }
+
+  .header nav {
+    gap: 5px;
+  }
+
+  .header nav button {
+    height: 38px;
+
+    padding: 0 9px;
+
+    font-size: 11px;
+  }
+
+  .ocean-view {
+    height: calc(100vh - 72px);
+  }
+
+  .ocean-panel {
+    left: 10px;
+    top: 65px;
+    width: 285px;
+  }
+}
+
+
+/* ============================================================
+   SMALL MOBILE
+============================================================ */
+
+@media (max-width: 560px) {
+
+  .header {
+    height: 68px;
+  }
+
+  .brand h1 {
+    font-size: 19px;
+  }
+
+  .brand p {
+    font-size: 9px;
+  }
+
+  .header nav button {
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .ocean-view {
+    height: calc(100vh - 68px);
+  }
+
+  .ocean-panel {
+    width: 280px;
+  }
+}
