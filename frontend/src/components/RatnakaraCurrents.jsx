@@ -2,8 +2,10 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
-/* RATNAKARA CURRENT FLOW — IMPROVED
-   CatmullRomCurve3, ocean-only paths, data-driven direction */
+/* RATNAKARA CURRENT FLOW — REAL DATA VERSION
+   Uses actual U/V current vectors from the NetCDF model dataset
+   to generate flow paths. Falls back to synthetic paths when
+   real data is not available. */
 
 const CURRENT_RADIUS = 2.044;
 const PARTICLES_PER_CURRENT = 6;
@@ -29,6 +31,7 @@ function isLand(lat, lon) {
   return false;
 }
 
+/* Synthetic fallback paths (used when real data unavailable) */
 const FLOW_FAMILIES = [
   { name: "arabian_sea_east", points: [{ lat: 10, lon: 52 }, { lat: 12, lon: 58 }, { lat: 14, lon: 64 }, { lat: 15, lon: 68 }, { lat: 13, lon: 72 }], speed: 0.04 },
   { name: "arabian_sea_north", points: [{ lat: 5, lon: 55 }, { lat: 8, lon: 60 }, { lat: 12, lon: 65 }, { lat: 16, lon: 68 }], speed: 0.035 },
@@ -52,9 +55,100 @@ function createFlowCurve(family) {
   return new THREE.CatmullRomCurve3(vectors, false, "catmullrom", 0.5);
 }
 
-function createDataDrivenCurve(dataPoints) {
-  if (!dataPoints || dataPoints.length < 2) return null;
-  const vectors = dataPoints
+/**
+ * Build a spatial lookup from real U/V vectors for nearest-neighbour queries.
+ */
+function buildCurrentLookup(vectors) {
+  if (!vectors || vectors.length === 0) return null;
+
+  const map = new Map();
+  for (const v of vectors) {
+    const key = `${v.latitude.toFixed(1)},${v.longitude.toFixed(1)}`;
+    if (!map.has(key)) {
+      map.set(key, v);
+    }
+  }
+
+  return function getVector(lat, lon) {
+    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+    if (map.has(key)) return map.get(key);
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const v of vectors) {
+      const d = (v.latitude - lat) ** 2 + (v.longitude - lon) ** 2;
+      if (d < bestDist) { bestDist = d; best = v; }
+    }
+    return bestDist < 25 ? best : null;
+  };
+}
+
+/**
+ * Trace flow paths through the real U/V current field.
+ * Starting from seed points, follow the current direction to create
+ * smooth flow lines that represent actual ocean circulation.
+ */
+function traceFlowPaths(vectors, stepDeg = 4.0, pathLength = 8, numSeeds = 20) {
+  const lookup = buildCurrentLookup(vectors);
+  if (!lookup) return [];
+
+  /* Select seed points: ocean locations with significant current speed */
+  const seeds = [];
+  const latRange = { min: -30, max: 25 };
+  const lonRange = { min: 50, max: 95 };
+
+  for (let lat = latRange.min; lat <= latRange.max; lat += stepDeg * 2) {
+    for (let lon = lonRange.min; lon <= lonRange.max; lon += stepDeg * 2) {
+      const v = lookup(lat, lon);
+      if (!v || isLand(lat, lon)) continue;
+      const speed = Math.sqrt(v.u * v.u + v.v * v.v);
+      if (speed > 0.05) {
+        seeds.push({ lat, lon, speed });
+      }
+    }
+  }
+
+  /* Sort by speed descending, take top seeds */
+  seeds.sort((a, b) => b.speed - a.speed);
+  const selected = seeds.slice(0, numSeeds);
+
+  /* Trace paths from each seed */
+  const paths = [];
+  for (const seed of selected) {
+    const path = [];
+    let lat = seed.lat;
+    let lon = seed.lon;
+
+    for (let step = 0; step < pathLength; step++) {
+      if (isLand(lat, lon)) break;
+      const v = lookup(lat, lon);
+      if (!v) break;
+
+      const speed = Math.sqrt(v.u * v.u + v.v * v.v);
+      if (speed < 0.01) break;
+
+      path.push({ latitude: lat, longitude: lon, u: v.u, v: v.v, speed });
+
+      /* Move in the direction of the current */
+      /* u = east-west (positive = east), v = north-south (positive = north) */
+      lat += v.v * stepDeg * 0.5;
+      lon += v.u * stepDeg * 0.5;
+    }
+
+    if (path.length >= 2) {
+      paths.push(path);
+    }
+  }
+
+  return paths;
+}
+
+/**
+ * Create a curve from a traced flow path.
+ */
+function createDataDrivenCurve(path) {
+  if (!path || path.length < 2) return null;
+  const vectors = path
     .filter((p) => !isLand(p.latitude, p.longitude))
     .map((p) => latLonToVector(p.latitude, p.longitude));
   if (vectors.length < 2) return null;
@@ -115,14 +209,31 @@ function CurrentLine({ curve, speed, phase }) {
   );
 }
 
-export default function RatnakaraCurrents({ depth = 0, dataPoints = null }) {
+export default function RatnakaraCurrents({ depth = 0, currentVectors = null }) {
   const currents = useMemo(() => {
+    /* If real U/V vectors are available, trace flow paths from them */
+    if (currentVectors && currentVectors.length > 0) {
+      const paths = traceFlowPaths(currentVectors);
+      if (paths.length > 0) {
+        return paths.map((path, index) => {
+          const avgSpeed = path.reduce((s, p) => s + p.speed, 0) / path.length;
+          const curve = createDataDrivenCurve(path);
+          if (!curve) return null;
+          /* Scale speed for animation: real speeds are ~0.05-2.0 m/s,
+             map to animation speed range 0.02-0.08 */
+          const animSpeed = 0.02 + Math.min(avgSpeed, 2.0) * 0.03;
+          return { id: index, curve, speed: animSpeed, phase: (index * 0.137) % 1 };
+        }).filter(Boolean);
+      }
+    }
+
+    /* Fallback: synthetic flow paths */
     return FLOW_FAMILIES.map((family, index) => {
-      const curve = dataPoints ? createDataDrivenCurve(dataPoints) : createFlowCurve(family);
+      const curve = createFlowCurve(family);
       if (!curve) return null;
       return { id: index, curve, speed: family.speed, phase: (index * 0.137) % 1 };
     }).filter(Boolean);
-  }, [dataPoints]);
+  }, [currentVectors]);
 
   return (
     <group>

@@ -6,6 +6,10 @@ import type {
   ObservationResponse,
   ComparisonResponse,
   AnomalyResponse,
+  ValidationResponse,
+  AlertResponse,
+  ChatRequest,
+  ChatResponse,
 } from '../types/api'
 
 const BASE_URL = ''  // Vite proxy handles /api → backend
@@ -126,4 +130,39 @@ export async function fetchAnomalies(params: AnomalyParams): Promise<AnomalyResp
     if (k !== 'variable' && v !== undefined) qs.set(k, String(v))
   }
   return fetchJson(`/api/v1/anomalies?${qs}`)
+}
+
+// --- Validation (Forecast Truth Engine) ---
+export interface ValidationParams {
+  variable?: string
+  max_distance_km?: number
+  max_depth_diff?: number
+  max_time_diff_days?: number
+}
+
+export async function fetchValidation(params: ValidationParams = {}): Promise<ValidationResponse> {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined) qs.set(k, String(v))
+  }
+  return fetchJson(`/api/v1/validation?${qs}`)
+}
+
+// --- Alert (Forecast Truth Engine deterministic alert) ---
+export async function fetchAlert(variable: string = 'temperature'): Promise<AlertResponse> {
+  return fetchJson(`/api/v1/alert?variable=${encodeURIComponent(variable)}`)
+}
+
+// --- Chat (OceanAI) ---
+export async function fetchChat(request: ChatRequest): Promise<ChatResponse> {
+  const res = await fetch('/api/v1/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
 }

@@ -10,6 +10,9 @@ from app.api.metadata import router as metadata_router
 from app.api.model_field import router as model_field_router
 from app.api.observations import router as observations_router
 from app.api.chat import router as chat_router
+from app.api.validation import router as validation_router
+from app.api.alert import router as alert_router
+from app.api.decision import router as decision_router
 
 app = FastAPI(
     title="SAGARA Ocean Analytics API",
@@ -79,4 +82,7 @@ app.include_router(model_field_router, prefix="/api/v1")
 app.include_router(observations_router, prefix="/api/v1")
 app.include_router(comparison_router, prefix="/api/v1")
 app.include_router(anomalies_router, prefix="/api/v1")
+app.include_router(validation_router, prefix="/api/v1")
+app.include_router(alert_router, prefix="/api/v1")
+app.include_router(decision_router, prefix="/api/v1")
 app.include_router(chat_router)

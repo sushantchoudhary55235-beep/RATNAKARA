@@ -173,3 +173,82 @@ export interface AnomalyResponse {
   anomalies: Anomaly[]
   notes: string[]
 }
+
+// --- Validation (Forecast Truth Engine) ---
+export interface ValidationMetrics {
+  bias: number
+  mae: number
+  rmse: number
+  pair_count: number
+  model_mean: number
+  observation_mean: number
+}
+
+export interface CollocationInfo {
+  total_argo_candidates: number
+  spatial_temporal_matched: number
+  depth_matched: number
+  valid_pairs: number
+  rejected_by_land: number
+  mean_depth_difference_dbar: number
+  max_depth_difference_dbar: number
+  mean_spatial_distance_km: number
+  max_spatial_distance_km: number
+  model_time_used: string
+  observation_time_range: string[]
+  depth_tolerance_dbar: number
+  time_tolerance_days: number
+}
+
+export interface ValidationResponse {
+  variable: string
+  unit: string
+  source_model: string
+  source_observation: string
+  mode: string
+  metrics: ValidationMetrics
+  collocation: CollocationInfo
+  notes: string[]
+}
+
+// --- Alert (Forecast Truth Engine deterministic alert) ---
+export interface AlertThreshold {
+  metric: string
+  value: number
+  threshold: number
+  passed: boolean
+}
+
+export interface AlertResult {
+  variable: string
+  unit: string
+  risk_level: string
+  reason: string
+  thresholds_evaluated: AlertThreshold[]
+  pair_count: number
+  indicator_type: string
+}
+
+export interface AlertResponse {
+  alerts: AlertResult[]
+  overall_risk: string
+  mode: string
+  notes: string[]
+}
+
+// --- Chat (OceanAI) ---
+export interface ChatContext {
+  latitude?: number
+  longitude?: number
+  depth?: number
+  variable?: string
+}
+
+export interface ChatRequest {
+  question: string
+  context?: ChatContext
+}
+
+export interface ChatResponse {
+  answer: string
+}

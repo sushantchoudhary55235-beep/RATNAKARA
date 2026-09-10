@@ -29,6 +29,7 @@ import TemperatureLegend from "./components/TemperatureLegend";
 import CurrentLegend from "./components/CurrentLegend";
 import LocationLabel from "./components/LocationLabel";
 import { COASTAL_ADVISORIES } from "./data/coastalAdvisories";
+import { fetchHealth, fetchMetadata, fetchModelField, fetchObservations, fetchValidation, fetchAlert } from "./services/api";
 
 /*
   IMPORTANT:
@@ -537,72 +538,63 @@ function temperatureToColor(
 
 
 /* ============================================================
-   DEMONSTRATION TEMPERATURE MODEL
+   REAL TEMPERATURE DATA LOOKUP
+
+   Builds a spatial lookup from the backend model-field
+   response so that createTemperatureGeometry can use
+   real NetCDF values instead of the synthetic model.
 ============================================================ */
 
-function getDemoTemperature(
-  latitude,
-  longitude,
-  depth
-) {
-  const latitudeEffect =
-    Math.abs(
-      latitude - 8
-    ) * 0.075;
-
-  const basinWave =
-    Math.sin(
-      longitude *
-        Math.PI /
-        22
-    ) * 0.85;
-
-  const latitudeWave =
-    Math.cos(
-      latitude *
-        Math.PI /
-        26
-    ) * 0.45;
-
-  let basinWarmth = 0;
-
-  if (
-    longitude >= 68 &&
-    longitude <= 82 &&
-    latitude >= 5 &&
-    latitude <= 27
-  ) {
-    basinWarmth = 1.9;
+function buildModelLookup(modelPoints) {
+  if (!modelPoints || modelPoints.length === 0) {
+    return null;
   }
 
-  else if (
-    longitude >= 80 &&
-    longitude <= 105 &&
-    latitude >= 5 &&
-    latitude <= 25
-  ) {
-    basinWarmth = 1.15;
+  /*
+    Index by rounded lat/lon (1 decimal) for O(1) lookup.
+    The model grid is ~3.9 deg spacing so 1-decimal
+    rounding is safe for nearest-neighbour matching.
+  */
+  const map = new Map();
+
+  for (const pt of modelPoints) {
+    const key = `${pt.latitude.toFixed(1)},${pt.longitude.toFixed(1)}`;
+
+    if (!map.has(key)) {
+      map.set(key, pt.value);
+    }
   }
 
-  else if (
-    longitude >= 55 &&
-    longitude <= 100 &&
-    latitude < 8
-  ) {
-    basinWarmth = 0.45;
-  }
+  return function getModelValue(lat, lon) {
+    /* Try exact rounded key first */
+    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
 
-  const depthCooling =
-    depth * 0.004;
+    if (map.has(key)) {
+      return map.get(key);
+    }
 
-  return (
-    27.65 +
-    basinWarmth +
-    basinWave +
-    latitudeWave -
-    latitudeEffect -
-    depthCooling
-  );
+    /*
+      Brute-force nearest neighbour (model grid is small,
+      max ~600 points — this runs once per vertex per
+      geometry build, not per frame).
+    */
+    let best = null;
+    let bestDist = Infinity;
+
+    for (const pt of modelPoints) {
+      const dlat = pt.latitude - lat;
+      const dlon = pt.longitude - lon;
+      const dist = dlat * dlat + dlon * dlon;
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = pt.value;
+      }
+    }
+
+    /* Only accept if within ~5 degrees (model grid spacing ~3.9°) */
+    return bestDist < 25 ? best : null;
+  };
 }
 
 
@@ -666,7 +658,8 @@ function isOceanRegion(lat, lon) {
 
 function createTemperatureGeometry(
   depth = 0,
-  radius = 2.033
+  radius = 2.033,
+  modelPoints = []
 ) {
   const latStart = -35;
   const latEnd = 28;
@@ -709,6 +702,11 @@ function createTemperatureGeometry(
   const lonMax =
     lonEnd - 4;
 
+  const modelLookup =
+    modelPoints.length > 0
+      ? buildModelLookup(modelPoints)
+      : null;
+
   for (
     let latIndex = 0;
     latIndex < latCount;
@@ -733,12 +731,35 @@ function createTemperatureGeometry(
           longitude
         );
 
-      const temperature =
-        getDemoTemperature(
+      /*
+        Use real backend data when available,
+        fall back to inline synthetic while loading.
+      */
+      let temperature;
+
+      if (modelLookup) {
+        temperature = modelLookup(
           latitude,
-          longitude,
-          depth
+          longitude
         );
+
+        if (temperature === null) {
+          /* Model has no data here (land) — skip */
+          alphas.push(0.0);
+          positions.push(0, 0, 0);
+          colors.push(0, 0, 0);
+          continue;
+        }
+      }
+      else {
+        /* Fallback: inline synthetic while data loads */
+        temperature =
+          27.65 +
+          Math.sin(longitude * Math.PI / 22) * 0.85 +
+          Math.cos(latitude * Math.PI / 26) * 0.45 -
+          Math.abs(latitude - 8) * 0.075 -
+          depth * 0.004;
+      }
 
       const position =
         satelliteLatLonToVector(
@@ -871,6 +892,7 @@ function createTemperatureGeometry(
 function TemperatureLayer({
   depth = 0,
   radius = 2.033,
+  modelPoints = [],
 }) {
   const materialRef =
     useRef(null);
@@ -889,9 +911,10 @@ function TemperatureLayer({
       () =>
         createTemperatureGeometry(
           depth,
-          radius
+          radius,
+          modelPoints
         ),
-      [depth, radius]
+      [depth, radius, modelPoints]
     );
 
   useFrame(
@@ -1808,6 +1831,81 @@ function Atmosphere({
 
 function OceanGlowPoints() {
   return null;
+}
+
+
+/* ============================================================
+   ARGO OBSERVATION MARKERS
+
+   Renders all returned Argo observation locations as small
+   cyan dots on the globe using a single InstancedMesh for
+   performance (handles thousands of points).
+============================================================ */
+
+function ArgoMarkers({ observations = [] }) {
+  const meshRef = useRef(null);
+
+  const MARKER_RADIUS = 2.038;
+  const MARKER_SIZE = 0.008;
+
+  const count = observations.length;
+
+  /*
+    Build the instance matrix array once when observations
+    change. Each matrix positions a small sphere at the
+    correct lat/lon on the globe surface.
+  */
+  useMemo(() => {
+    if (!meshRef.current || count === 0) return;
+
+    const dummy = new THREE.Object3D();
+
+    for (let i = 0; i < count; i++) {
+      const obs = observations[i];
+      const pos = satelliteLatLonToVector(
+        obs.latitude,
+        obs.longitude,
+        MARKER_RADIUS
+      );
+
+      dummy.position.copy(pos);
+
+      /*
+        Orient the marker to point outward from globe center.
+        Look at the center (0,0,0) from the marker position,
+        then rotate 180 so it faces outward.
+      */
+      dummy.lookAt(0, 0, 0);
+      dummy.rotateX(Math.PI);
+
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+
+      meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [observations, count]);
+
+  if (count === 0) return null;
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[null, null, count]}
+      frustumCulled={false}
+      renderOrder={30}
+    >
+      <sphereGeometry args={[MARKER_SIZE, 6, 6]} />
+      <meshBasicMaterial
+        color="#00e5ff"
+        transparent
+        opacity={0.85}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </instancedMesh>
+  );
 }
 
 
@@ -2883,6 +2981,101 @@ function App() {
 
 
   /* ==========================================================
+     PHASE 2 — REAL MODEL DATA
+  ========================================================== */
+
+  const [
+    modelPoints,
+    setModelPoints,
+  ] = useState([]);
+
+  const [
+    modelLoading,
+    setModelLoading,
+  ] = useState(false);
+
+  const [
+    modelError,
+    setModelError,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     PHASE 3 — ARGO OBSERVATIONS
+  ========================================================== */
+
+  const [
+    argoObservations,
+    setArgoObservations,
+  ] = useState([]);
+
+
+  /* ==========================================================
+     PHASE 6 — OCEAN CURRENT DATA
+  ========================================================== */
+
+  const [
+    currentVectors,
+    setCurrentVectors,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     PHASE 4 — FORECAST TRUTH ENGINE
+  ========================================================== */
+
+  const [
+    validationMetrics,
+    setValidationMetrics,
+  ] = useState(null);
+
+  const [
+    validationCollocation,
+    setValidationCollocation,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     PHASE 5 — DETERMINISTIC OCEAN ALERT
+  ========================================================== */
+
+  const [
+    alertData,
+    setAlertData,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     PHASE 8 — ASK THE OCEAN
+  ========================================================== */
+
+  const [
+    chatOpen,
+    setChatOpen,
+  ] = useState(false);
+
+  const [
+    chatInput,
+    setChatInput,
+  ] = useState("");
+
+  const [
+    chatAnswer,
+    setChatAnswer,
+  ] = useState("");
+
+  const [
+    chatLoading,
+    setChatLoading,
+  ] = useState(false);
+
+  const [
+    chatError,
+    setChatError,
+  ] = useState(null);
+
+
+  /* ==========================================================
      LAYER VISIBILITY
   ========================================================== */
 
@@ -3318,6 +3511,212 @@ function App() {
       clearLayerAnimationTimer();
     };
   }, []);
+
+
+  /* ==========================================================
+     PHASE 1 — BACKEND CONNECTION
+
+     Calls /health and /api/v1/metadata on mount to prove
+     the React frontend can talk to the FastAPI backend
+     through the Vite dev proxy.
+  ========================================================== */
+
+  useEffect(() => {
+    fetchHealth()
+      .then((data) => {
+        console.log("[RATNAKARA] /health:", data);
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] /health failed:", err);
+      });
+
+    fetchMetadata()
+      .then((data) => {
+        console.log("[RATNAKARA] /api/v1/metadata:", data);
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] /api/v1/metadata failed:", err);
+      });
+  }, []);
+
+
+  /* ==========================================================
+     PHASE 2 — REAL TEMPERATURE DATA
+
+     Fetches real model-field data from the backend whenever
+     the user changes depth. The single available timestep
+     is 2026-06-23T00:00:00 (from the metadata).
+  ========================================================== */
+
+  useEffect(() => {
+    setModelLoading(true);
+    setModelError(null);
+
+    fetchModelField({
+      variable: "temperature",
+      depth: depth,
+      time: "2026-06-23T00:00:00",
+      max_points: 5000,
+    })
+      .then((data) => {
+        setModelPoints(data.points);
+        console.log(
+          `[RATNAKARA] model-field: ${data.points.length} points at depth ${data.depth}m`
+        );
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] model-field failed:", err);
+        setModelError(err.message || "Failed to load model data");
+      })
+      .finally(() => {
+        setModelLoading(false);
+      });
+  }, [depth]);
+
+
+  /* ==========================================================
+     PHASE 3 — ARGO OBSERVATIONS
+
+     Fetches real Argo observation locations on mount and
+     displays them as markers on the globe.
+  ========================================================== */
+
+  useEffect(() => {
+    fetchObservations({
+      max_observations: 5000,
+    })
+      .then((data) => {
+        setArgoObservations(data.observations);
+        console.log(
+          `[RATNAKARA] Argo: ${data.count} observations (${data.mode})`
+        );
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] Argo observations failed:", err);
+      });
+  }, []);
+
+
+  /* ==========================================================
+     PHASE 6 — REAL OCEAN CURRENT DATA
+
+     Fetches U/V current data from the model-field API
+     and merges into vectors for the current visualization.
+  ========================================================= */
+
+  useEffect(() => {
+    const time = "2026-06-23T00:00:00";
+
+    Promise.all([
+      fetchModelField({ variable: "u_current", depth, time, max_points: 500 }),
+      fetchModelField({ variable: "v_current", depth, time, max_points: 500 }),
+    ])
+      .then(([uData, vData]) => {
+        /* Merge U and V by nearest lat/lon key */
+        const uMap = new Map();
+        for (const pt of uData.points) {
+          const key = `${pt.latitude.toFixed(1)},${pt.longitude.toFixed(1)}`;
+          uMap.set(key, pt.value);
+        }
+
+        const merged = [];
+        for (const vPt of vData.points) {
+          const key = `${vPt.latitude.toFixed(1)},${vPt.longitude.toFixed(1)}`;
+          const uVal = uMap.get(key);
+          if (uVal !== undefined && !isNaN(uVal) && !isNaN(vPt.value)) {
+            merged.push({
+              latitude: vPt.latitude,
+              longitude: vPt.longitude,
+              u: uVal,
+              v: vPt.value,
+            });
+          }
+        }
+
+        setCurrentVectors(merged);
+        console.log(
+          `[RATNAKARA] Currents: ${merged.length} vectors at depth ${depth}m`
+        );
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] Current data failed:", err);
+      });
+  }, [depth]);
+
+
+  /* ==========================================================
+     PHASE 4 — FORECAST TRUTH ENGINE
+
+     Runs batch model-vs-Argo comparison to produce
+     validation metrics (Bias, MAE, RMSE).
+  ========================================================== */
+
+  useEffect(() => {
+    fetchValidation()
+      .then((data) => {
+        setValidationMetrics(data.metrics);
+        setValidationCollocation(data.collocation);
+        console.log(
+          `[RATNAKARA] Validation: Bias=${data.metrics.bias}, MAE=${data.metrics.mae}, RMSE=${data.metrics.rmse}, pairs=${data.metrics.pair_count}`
+        );
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] Validation failed:", err);
+      });
+  }, []);
+
+
+  /* ==========================================================
+     PHASE 5 — DETERMINISTIC OCEAN ALERT
+
+     Fetches the deterministic alert result (GREEN/YELLOW/RED)
+     based on validation metrics.
+  ========================================================== */
+
+  useEffect(() => {
+    fetchAlert()
+      .then((data) => {
+        setAlertData(data);
+        console.log(
+          `[RATNAKARA] Alert: ${data.overall_risk}`
+        );
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] Alert failed:", err);
+      });
+  }, []);
+
+
+  /* ==========================================================
+     PHASE 8 — ASK THE OCEAN HANDLER
+  ========================================================= */
+
+  const handleChatSubmit = async () => {
+    const question = chatInput.trim();
+    if (!question || chatLoading) return;
+
+    setChatLoading(true);
+    setChatAnswer("");
+    setChatError(null);
+
+    try {
+      const response = await fetchChat({
+        question,
+        context: {
+          latitude: selectedLocation?.lat,
+          longitude: selectedLocation?.lon,
+          depth,
+          variable: activeLayer?.toLowerCase(),
+        },
+      });
+      setChatAnswer(response.answer);
+    } catch (err) {
+      console.error("[RATNAKARA] Chat failed:", err);
+      setChatError(err.message || "OceanAI is unavailable.");
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
 
   /* ==========================================================
@@ -4293,12 +4692,20 @@ function App() {
               <OceanGlowPoints />
 
 
+              <ArgoMarkers
+                observations={
+                  argoObservations
+                }
+              />
+
+
               {activeLayer ===
                 "Temperature" &&
                 visibleLayers.temperature && (
                   <TemperatureLayer
                     depth={depth}
                     radius={2.034}
+                    modelPoints={modelPoints}
                   />
                 )}
 
@@ -4314,6 +4721,7 @@ function App() {
 
                       <RatnakaraCurrents
                         depth={depth}
+                        currentVectors={currentVectors}
                       />
 
                     </CurrentsErrorBoundary>
@@ -4448,6 +4856,467 @@ function App() {
             lightMode
           }
         />
+
+
+        {/* ====================================================
+            PHASE 4 — FORECAST TRUTH ENGINE
+            Compact validation metrics overlay
+        ==================================================== */}
+
+        {validationMetrics && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 16,
+              left: 16,
+              background: lightMode
+                ? "rgba(248,253,255,0.92)"
+                : "rgba(10,18,32,0.88)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              border: lightMode
+                ? "1px solid rgba(22,135,201,0.20)"
+                : "1px solid rgba(148,163,184,0.18)",
+              borderRadius: 10,
+              padding: "10px 14px",
+              zIndex: 20,
+              fontFamily:
+                'Inter, "Segoe UI", Arial, sans-serif',
+              fontSize: 11,
+              color: lightMode ? "#163743" : "#e2e8f0",
+              lineHeight: 1.6,
+              minWidth: 180,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: "1px",
+                color: lightMode
+                  ? "#8fadb8"
+                  : "#94a3b8",
+                marginBottom: 4,
+              }}
+            >
+              MODEL vs ARGO
+            </div>
+
+            <div>
+              <span
+                style={{
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                }}
+              >
+                Bias:
+              </span>
+              {" "}
+              <span
+                style={{ fontWeight: 600 }}
+              >
+                {validationMetrics.bias}
+                {" °C"}
+              </span>
+            </div>
+
+            <div>
+              <span
+                style={{
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                }}
+              >
+                MAE:
+              </span>
+              {" "}
+              <span
+                style={{ fontWeight: 600 }}
+              >
+                {validationMetrics.mae}
+                {" °C"}
+              </span>
+            </div>
+
+            <div>
+              <span
+                style={{
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                }}
+              >
+                RMSE:
+              </span>
+              {" "}
+              <span
+                style={{ fontWeight: 600 }}
+              >
+                {validationMetrics.rmse}
+                {" °C"}
+              </span>
+            </div>
+
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 9,
+                color: lightMode
+                  ? "#8fadb8"
+                  : "#94a3b8",
+              }}
+            >
+              {validationMetrics.pair_count}
+              {" pairs"}
+            </div>
+
+            {validationCollocation && (
+              <div
+                style={{
+                  marginTop: 6,
+                  paddingTop: 6,
+                  borderTop: lightMode
+                    ? "1px solid rgba(22,135,201,0.12)"
+                    : "1px solid rgba(148,163,184,0.12)",
+                  fontSize: 9,
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                  lineHeight: 1.5,
+                }}
+              >
+                <div>Depth match: ~{Math.round(validationCollocation.mean_depth_difference_dbar)} dbar</div>
+                <div>Spatial: ~{Math.round(validationCollocation.mean_spatial_distance_km)} km</div>
+                <div>Model: {validationCollocation.model_time_used.split("T")[0]}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+
+        {/* ====================================================
+            PHASE 5 — DETERMINISTIC OCEAN ALERT
+            Compact risk-level indicator
+        ==================================================== */}
+
+        {alertData && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 16,
+              left: 210,
+              background: lightMode
+                ? "rgba(248,253,255,0.92)"
+                : "rgba(10,18,32,0.88)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              border: lightMode
+                ? "1px solid rgba(22,135,201,0.20)"
+                : "1px solid rgba(148,163,184,0.18)",
+              borderRadius: 10,
+              padding: "10px 14px",
+              zIndex: 20,
+              fontFamily:
+                'Inter, "Segoe UI", Arial, sans-serif',
+              fontSize: 11,
+              color: lightMode ? "#163743" : "#e2e8f0",
+              lineHeight: 1.6,
+              minWidth: 160,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: "1px",
+                color: lightMode
+                  ? "#8fadb8"
+                  : "#94a3b8",
+                marginBottom: 4,
+              }}
+            >
+              OCEAN ALERT
+            </div>
+
+            {/* Risk level badge */}
+            <div
+              style={{
+                display: "inline-block",
+                padding: "2px 10px",
+                borderRadius: 6,
+                background:
+                  alertData.overall_risk === "GREEN"
+                    ? "rgba(34,197,94,0.15)"
+                    : alertData.overall_risk === "YELLOW"
+                    ? "rgba(234,179,8,0.15)"
+                    : "rgba(239,68,68,0.15)",
+                color:
+                  alertData.overall_risk === "GREEN"
+                    ? "#22c55e"
+                    : alertData.overall_risk === "YELLOW"
+                    ? "#eab308"
+                    : "#ef4444",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.5px",
+                marginBottom: 6,
+              }}
+            >
+              {alertData.overall_risk}
+            </div>
+
+            {alertData.alerts.length > 0 && (
+              <div
+                style={{
+                  fontSize: 10,
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                  lineHeight: 1.5,
+                  maxWidth: 220,
+                }}
+              >
+                {alertData.alerts[0].reason}
+              </div>
+            )}
+
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 8,
+                color: lightMode
+                  ? "#b0c4cc"
+                  : "#64748b",
+                fontStyle: "italic",
+              }}
+            >
+              Prototype thresholds — not official
+            </div>
+          </div>
+        )}
+
+
+        {/* ====================================================
+            PHASE 8 — ASK THE OCEAN
+            Toggle button + compact chat panel
+        ==================================================== */}
+
+        {/* Toggle button */}
+        {!chatOpen && (
+          <button
+            onClick={() => setChatOpen(true)}
+            style={{
+              position: "absolute",
+              bottom: 16,
+              right: 16,
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              border: lightMode
+                ? "1px solid rgba(22,135,201,0.30)"
+                : "1px solid rgba(36,154,255,0.60)",
+              background: lightMode
+                ? "rgba(248,253,255,0.92)"
+                : "rgba(10,18,32,0.88)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              color: lightMode ? "#163743" : "#e2e8f0",
+              fontSize: 18,
+              cursor: "pointer",
+              zIndex: 30,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: lightMode
+                ? "0 0 8px rgba(22,135,201,0.12)"
+                : "0 0 10px rgba(0,145,255,0.32)",
+              fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+            }}
+            title="Ask the Ocean"
+          >
+            🌊
+          </button>
+        )}
+
+        {/* Chat panel */}
+        {chatOpen && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 16,
+              right: 16,
+              width: 320,
+              maxHeight: 400,
+              background: lightMode
+                ? "rgba(248,253,255,0.95)"
+                : "rgba(10,18,32,0.92)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              border: lightMode
+                ? "1px solid rgba(22,135,201,0.20)"
+                : "1px solid rgba(148,163,184,0.18)",
+              borderRadius: 10,
+              padding: 12,
+              zIndex: 30,
+              fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+              fontSize: 11,
+              color: lightMode ? "#163743" : "#e2e8f0",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: "1px",
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                }}
+              >
+                ASK THE OCEAN
+              </div>
+              <button
+                onClick={() => {
+                  setChatOpen(false);
+                  setChatAnswer("");
+                  setChatError(null);
+                  setChatInput("");
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  padding: 0,
+                  lineHeight: 1,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Input area */}
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+              }}
+            >
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleChatSubmit();
+                }}
+                placeholder="What does this ocean data indicate?"
+                disabled={chatLoading}
+                style={{
+                  flex: 1,
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: lightMode
+                    ? "1px solid rgba(22,135,201,0.25)"
+                    : "1px solid rgba(148,163,184,0.18)",
+                  background: lightMode
+                    ? "rgba(220,236,244,0.50)"
+                    : "rgba(20,30,48,0.60)",
+                  color: lightMode ? "#163743" : "#e2e8f0",
+                  fontSize: 11,
+                  fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={handleChatSubmit}
+                disabled={chatLoading || !chatInput.trim()}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: lightMode
+                    ? "1px solid rgba(22,135,201,0.40)"
+                    : "1px solid rgba(36,154,255,0.70)",
+                  background: lightMode
+                    ? "rgba(22,135,201,0.15)"
+                    : "rgba(36,154,255,0.20)",
+                  color: lightMode ? "#163743" : "#e2e8f0",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: chatLoading || !chatInput.trim()
+                    ? "not-allowed"
+                    : "pointer",
+                  fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+                }}
+              >
+                {chatLoading ? "..." : "Ask"}
+              </button>
+            </div>
+
+            {/* Loading indicator */}
+            {chatLoading && (
+              <div
+                style={{
+                  fontSize: 10,
+                  color: lightMode
+                    ? "#8fadb8"
+                    : "#94a3b8",
+                  fontStyle: "italic",
+                }}
+              >
+                OceanAI is thinking...
+              </div>
+            )}
+
+            {/* Error */}
+            {chatError && (
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "#ef4444",
+                  lineHeight: 1.4,
+                }}
+              >
+                {chatError}
+              </div>
+            )}
+
+            {/* Answer */}
+            {chatAnswer && !chatLoading && (
+              <div
+                style={{
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  color: lightMode ? "#163743" : "#cbd5e1",
+                  maxHeight: 280,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  borderTop: lightMode
+                    ? "1px solid rgba(22,135,201,0.12)"
+                    : "1px solid rgba(148,163,184,0.12)",
+                  paddingTop: 8,
+                }}
+              >
+                {chatAnswer}
+              </div>
+            )}
+          </div>
+        )}
 
       </main>
 
