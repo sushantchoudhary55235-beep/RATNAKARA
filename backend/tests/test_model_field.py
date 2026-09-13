@@ -113,6 +113,15 @@ class TestEndpointExists:
         resp = client.get("/api/v1/model-field")
         assert resp.status_code == 422
 
+    def test_model_capabilities_are_discovered_from_dataset(self, client, synthetic_env):
+        resp = client.get("/api/v1/model-capabilities")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["variables"]) == {"temperature", "salinity", "u_current", "v_current"}
+        assert body["depths_m"] == [5.0, 100.0]
+        assert body["timestamps"] == ["2026-06-23T00:00:00"]
+        assert body["time_steps"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Variable validation

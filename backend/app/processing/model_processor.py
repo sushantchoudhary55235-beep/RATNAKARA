@@ -131,6 +131,29 @@ def get_variable_map() -> dict[str, str]:
     return dict(VARIABLE_MAP)
 
 
+def get_model_capabilities(
+    *, dataset: xr.Dataset | None = None, path: str | os.PathLike | None = None
+) -> dict:
+    """Return the model's real selectable dimensions without loading field values."""
+    ds = dataset if dataset is not None else load_dataset(path)
+    available = {
+        name: _display_unit(ds, source_name, name)
+        for name, source_name in VARIABLE_MAP.items()
+        if source_name in ds.data_vars
+    }
+    if not available:
+        raise DatasetUnavailableError("No supported model variables are present in the model dataset")
+    if "depth" not in ds.coords or "time" not in ds.coords:
+        raise DatasetUnavailableError("Model dataset is missing required depth or time coordinates")
+    return {
+        "source": SOURCE_NAME,
+        "variables": available,
+        "depths_m": [float(value) for value in ds.depth.values],
+        "timestamps": [str(np.datetime64(value, "s")) for value in ds.time.values],
+        "time_steps": int(ds.sizes["time"]),
+    }
+
+
 def _display_unit(ds: xr.Dataset, source_var: str, variable: str) -> str:
     units_attr = ds[source_var].attrs.get("units", "")
     if units_attr in UNIT_ALIASES:

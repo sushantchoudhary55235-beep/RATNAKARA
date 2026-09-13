@@ -20,3 +20,13 @@ class ModelFieldResponse(BaseModel):
     time: str
     source: str
     points: list[ModelFieldPoint]
+
+
+class ModelCapabilitiesResponse(BaseModel):
+    """Actual selectable axes and variables discovered from the model NetCDF."""
+
+    source: str
+    variables: dict[str, str]
+    depths_m: list[float]
+    timestamps: list[str]
+    time_steps: int

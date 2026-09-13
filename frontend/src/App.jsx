@@ -29,7 +29,7 @@ import TemperatureLegend from "./components/TemperatureLegend";
 import CurrentLegend from "./components/CurrentLegend";
 import LocationLabel from "./components/LocationLabel";
 import { COASTAL_ADVISORIES } from "./data/coastalAdvisories";
-import { fetchHealth, fetchMetadata, fetchModelField, fetchObservations, fetchValidation, fetchAlert } from "./services/api";
+import { fetchAlert, fetchChat, fetchHealth, fetchMetadata, fetchModelField, fetchObservations, fetchValidation } from "./services/api";
 
 /*
   IMPORTANT:
@@ -752,13 +752,11 @@ function createTemperatureGeometry(
         }
       }
       else {
-        /* Fallback: inline synthetic while data loads */
-        temperature =
-          27.65 +
-          Math.sin(longitude * Math.PI / 22) * 0.85 +
-          Math.cos(latitude * Math.PI / 26) * 0.45 -
-          Math.abs(latitude - 8) * 0.075 -
-          depth * 0.004;
+        /* No model value: leave the cell transparent until real data arrives. */
+        alphas.push(0.0);
+        positions.push(0, 0, 0);
+        colors.push(0, 0, 0);
+        continue;
       }
 
       const position =
@@ -2999,6 +2997,8 @@ function App() {
     setModelError,
   ] = useState(null);
 
+  const [dataStatus, setDataStatus] = useState({ health: null, metadata: null, argoError: null, validationError: null, alertError: null });
+
 
   /* ==========================================================
      PHASE 3 — ARGO OBSERVATIONS
@@ -3085,6 +3085,7 @@ function App() {
   ] = useState({
     current: true,
     temperature: true,
+    argo: true,
     warnings: true,
   });
 
@@ -3524,17 +3525,21 @@ function App() {
   useEffect(() => {
     fetchHealth()
       .then((data) => {
+        setDataStatus((status) => ({ ...status, health: data }));
         console.log("[RATNAKARA] /health:", data);
       })
       .catch((err) => {
+        setDataStatus((status) => ({ ...status, health: { status: "unavailable" } }));
         console.error("[RATNAKARA] /health failed:", err);
       });
 
     fetchMetadata()
       .then((data) => {
+        setDataStatus((status) => ({ ...status, metadata: data }));
         console.log("[RATNAKARA] /api/v1/metadata:", data);
       })
       .catch((err) => {
+        setDataStatus((status) => ({ ...status, metadata: null }));
         console.error("[RATNAKARA] /api/v1/metadata failed:", err);
       });
   }, []);
@@ -3560,11 +3565,15 @@ function App() {
     })
       .then((data) => {
         setModelPoints(data.points);
+        // The API resolves requests to the nearest real NetCDF depth level.
+        // Keep the control and visualization aligned with that returned value.
+        setDepth((currentDepth) => currentDepth === data.depth ? currentDepth : data.depth);
         console.log(
           `[RATNAKARA] model-field: ${data.points.length} points at depth ${data.depth}m`
         );
       })
       .catch((err) => {
+        setDataStatus((status) => ({ ...status, argoError: err.message || "unavailable" }));
         console.error("[RATNAKARA] model-field failed:", err);
         setModelError(err.message || "Failed to load model data");
       })
@@ -3592,6 +3601,7 @@ function App() {
         );
       })
       .catch((err) => {
+        setDataStatus((status) => ({ ...status, validationError: err.message || "unavailable" }));
         console.error("[RATNAKARA] Argo observations failed:", err);
       });
   }, []);
@@ -3639,6 +3649,7 @@ function App() {
         );
       })
       .catch((err) => {
+        setDataStatus((status) => ({ ...status, alertError: err.message || "unavailable" }));
         console.error("[RATNAKARA] Current data failed:", err);
       });
   }, [depth]);
@@ -3745,6 +3756,18 @@ function App() {
         : "rgba(4,20,35,0.72)",
   };
 
+  const temperatureRange = modelPoints.length
+    ? {
+        min: Math.min(...modelPoints.map((point) => point.value)),
+        max: Math.max(...modelPoints.map((point) => point.value)),
+      }
+    : null;
+  const currentSummary = currentVectors?.length
+    ? Math.max(...currentVectors.map((vector) => Math.hypot(vector.u, vector.v)))
+    : null;
+  const modelTimestamp = dataStatus.metadata?.datasets?.model?.notes
+    ?.find((note) => note.includes("timestamp")) || "2026-06-23T00:00:00";
+
 
   return (
     <div
@@ -3780,7 +3803,7 @@ function App() {
           </h1>
 
           <p>
-            Ocean Intelligence Platform
+            3D Ocean Intelligence &amp; Visualization Platform
           </p>
 
         </div>
@@ -3879,6 +3902,12 @@ function App() {
           </button>
 
         </nav>
+
+        <div className="data-status" aria-label="Data status">
+          <span className={dataStatus.health?.status === "ok" ? "status-dot ready" : "status-dot"}></span>
+          <span>MODEL + ARGO</span>
+          <small>{modelTimestamp.replace("T", " ").slice(0, 16)} UTC</small>
+        </div>
 
 
         <div
@@ -4171,6 +4200,15 @@ function App() {
           </button>
 
 
+          <button
+            className={visibleLayers.argo ? "layer-button selected" : "layer-button"}
+            onClick={() => handleToggleLayer("argo")}
+          >
+            <span className="layer-icon">●</span>
+            <span><strong>Argo Observations</strong><small>{argoObservations.length ? `${argoObservations.length} real observation points` : "Data unavailable"}</small></span>
+          </button>
+
+
           {/* ==================================================
               COASTAL LINES
 
@@ -4450,61 +4488,6 @@ function App() {
             </>
           )}
 
-
-          {/* ==================================================
-              DEPTH
-          ================================================== */}
-
-          <div className="panel-divider"></div>
-
-          <div className="panel-section-title">
-            DEPTH
-          </div>
-
-
-          <div className="depth-values">
-
-            <span>
-              Surface
-            </span>
-
-            <strong>
-              {depth} m
-            </strong>
-
-          </div>
-
-
-          <input
-            className="depth-slider"
-            type="range"
-            min="0"
-            max="2000"
-            step="50"
-            value={depth}
-
-            onChange={(e) =>
-              setDepth(
-                Number(
-                  e.target.value
-                )
-              )
-            }
-          />
-
-
-          <div className="depth-labels">
-
-            <span>
-              0 m
-            </span>
-
-            <span>
-              2000 m
-            </span>
-
-          </div>
-
         </div>
 
 
@@ -4694,7 +4677,7 @@ function App() {
 
               <ArgoMarkers
                 observations={
-                  argoObservations
+                  visibleLayers.argo ? argoObservations : []
                 }
               />
 
@@ -4774,6 +4757,26 @@ function App() {
         {/* ====================================================
             HTML OVERLAY COMPONENTS
         ==================================================== */}
+
+        <aside className="ocean-inspector" aria-label="Ocean controls and provenance">
+          <div className="inspector-kicker">OCEAN CONTROLS</div>
+          <div className="inspector-row"><span>Variable</span><strong>{activeLayer || "None"}</strong></div>
+          {activeLayer === "Temperature" && <>
+            <div className="inspector-row"><span>Dataset depth</span><strong>{depth} m</strong></div>
+            <input className="inspector-slider" type="range" min="0" max="2000" step="50" value={depth} onChange={(event) => setDepth(Number(event.target.value))} aria-label="Temperature depth in metres" />
+          </>}
+          <div className="inspector-row"><span>Model field</span><strong>{modelLoading ? "Loading…" : modelError ? "Unavailable" : `${modelPoints.length} cells`}</strong></div>
+          {temperatureRange && <div className="inspector-row"><span>Temperature</span><strong>{temperatureRange.min.toFixed(1)}–{temperatureRange.max.toFixed(1)} °C</strong></div>}
+          <div className="inspector-divider" />
+          <div className="inspector-kicker">CURRENT VECTOR FIELD</div>
+          <div className="inspector-row"><span>U/V flow</span><strong>{currentVectors?.length ? `${currentVectors.length} vectors` : "Unavailable"}</strong></div>
+          {currentSummary !== null && <div className="inspector-row"><span>Max speed</span><strong>{currentSummary.toFixed(2)} m/s</strong></div>}
+          <div className="inspector-divider" />
+          <div className="inspector-kicker">PROVENANCE</div>
+          <p className="inspector-note">Model: {dataStatus.metadata?.datasets?.model?.source || "Data unavailable"}</p>
+          <p className="inspector-note">Observations: {dataStatus.metadata?.datasets?.argo?.source || dataStatus.argoError || "Loading…"}</p>
+          <p className="inspector-note">Markers: cyan = Argo observation; colour field = model forecast.</p>
+        </aside>
 
         <LocationLabel
           name={
@@ -4899,7 +4902,7 @@ function App() {
                 marginBottom: 4,
               }}
             >
-              MODEL vs ARGO
+              FORECAST TRUTH
             </div>
 
             <div>
@@ -4916,7 +4919,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.bias}
+                {validationMetrics.bias.toFixed(2)}
                 {" °C"}
               </span>
             </div>
@@ -4935,7 +4938,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.mae}
+                {validationMetrics.mae.toFixed(2)}
                 {" °C"}
               </span>
             </div>
@@ -4954,7 +4957,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.rmse}
+                {validationMetrics.rmse.toFixed(2)}
                 {" °C"}
               </span>
             </div>
@@ -4968,8 +4971,7 @@ function App() {
                   : "#94a3b8",
               }}
             >
-              {validationMetrics.pair_count}
-              {" pairs"}
+              Matched observations: {validationMetrics.pair_count}
             </div>
 
             {validationCollocation && (
@@ -5079,6 +5081,12 @@ function App() {
                 }}
               >
                 {alertData.alerts[0].reason}
+              </div>
+            )}
+
+            {alertData.alerts[0] && (
+              <div style={{ marginTop: 5, fontSize: 9, color: lightMode ? "#8fadb8" : "#94a3b8" }}>
+                Matched observations: {alertData.alerts[0].pair_count}
               </div>
             )}
 

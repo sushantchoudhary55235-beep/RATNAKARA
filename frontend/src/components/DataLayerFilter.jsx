@@ -16,6 +16,7 @@ import { useState } from "react";
 const LAYERS = [
   { id: "current", label: "CURRENT", icon: "🌊" },
   { id: "temperature", label: "TEMPERATURE", icon: "🌡" },
+  { id: "argo", label: "ARGO", icon: "●" },
   { id: "warnings", label: "WARNINGS", icon: "⚠️" },
 ];
 

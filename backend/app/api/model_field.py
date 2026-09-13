@@ -10,10 +10,19 @@ from app.processing.model_processor import (
     ModelProcessingError,
     get_variable_map,
 )
-from app.schemas.model import ModelFieldResponse
-from app.services.model_service import get_model_field
+from app.schemas.model import ModelCapabilitiesResponse, ModelFieldResponse
+from app.services.model_service import get_capabilities, get_model_field
 
 router = APIRouter(tags=["model-field"])
+
+
+@router.get("/model-capabilities", response_model=ModelCapabilitiesResponse)
+def read_model_capabilities() -> ModelCapabilitiesResponse:
+    """Expose actual variables, depths and timestamps from the local model file."""
+    try:
+        return get_capabilities()
+    except ModelProcessingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 @router.get("/model-field", response_model=ModelFieldResponse)

@@ -4,8 +4,7 @@ import * as THREE from "three";
 
 /* RATNAKARA CURRENT FLOW — REAL DATA VERSION
    Uses actual U/V current vectors from the NetCDF model dataset
-   to generate flow paths. Falls back to synthetic paths when
-   real data is not available. */
+   to generate flow paths. It renders nothing when data is unavailable. */
 
 const CURRENT_RADIUS = 2.044;
 const PARTICLES_PER_CURRENT = 6;
@@ -31,29 +30,6 @@ function isLand(lat, lon) {
   return false;
 }
 
-/* Synthetic fallback paths (used when real data unavailable) */
-const FLOW_FAMILIES = [
-  { name: "arabian_sea_east", points: [{ lat: 10, lon: 52 }, { lat: 12, lon: 58 }, { lat: 14, lon: 64 }, { lat: 15, lon: 68 }, { lat: 13, lon: 72 }], speed: 0.04 },
-  { name: "arabian_sea_north", points: [{ lat: 5, lon: 55 }, { lat: 8, lon: 60 }, { lat: 12, lon: 65 }, { lat: 16, lon: 68 }], speed: 0.035 },
-  { name: "arabian_sea_south", points: [{ lat: 2, lon: 56 }, { lat: 4, lon: 62 }, { lat: 6, lon: 67 }, { lat: 8, lon: 72 }], speed: 0.038 },
-  { name: "bengal_north", points: [{ lat: 5, lon: 85 }, { lat: 8, lon: 87 }, { lat: 12, lon: 88 }, { lat: 16, lon: 87 }, { lat: 18, lon: 86 }], speed: 0.032 },
-  { name: "bengal_east", points: [{ lat: 3, lon: 88 }, { lat: 7, lon: 90 }, { lat: 12, lon: 92 }, { lat: 16, lon: 93 }], speed: 0.036 },
-  { name: "bengal_west", points: [{ lat: 6, lon: 82 }, { lat: 10, lon: 83 }, { lat: 14, lon: 84 }, { lat: 17, lon: 83 }], speed: 0.03 },
-  { name: "equatorial_east", points: [{ lat: -2, lon: 50 }, { lat: -1, lon: 58 }, { lat: 0, lon: 66 }, { lat: 1, lon: 74 }, { lat: 0, lon: 82 }, { lat: -1, lon: 90 }], speed: 0.045 },
-  { name: "equatorial_south", points: [{ lat: -5, lon: 52 }, { lat: -4, lon: 60 }, { lat: -3, lon: 68 }, { lat: -4, lon: 76 }, { lat: -5, lon: 84 }], speed: 0.04 },
-  { name: "south_east", points: [{ lat: -20, lon: 55 }, { lat: -18, lon: 62 }, { lat: -16, lon: 70 }, { lat: -15, lon: 78 }, { lat: -14, lon: 86 }], speed: 0.05 },
-  { name: "south_mid", points: [{ lat: -25, lon: 58 }, { lat: -23, lon: 65 }, { lat: -21, lon: 72 }, { lat: -20, lon: 80 }, { lat: -19, lon: 88 }], speed: 0.048 },
-  { name: "south_deep", points: [{ lat: -30, lon: 55 }, { lat: -28, lon: 63 }, { lat: -26, lon: 71 }, { lat: -25, lon: 79 }, { lat: -24, lon: 87 }], speed: 0.052 },
-  { name: "cross_basin_1", points: [{ lat: 3, lon: 55 }, { lat: 5, lon: 65 }, { lat: 6, lon: 72 }, { lat: 4, lon: 80 }, { lat: 2, lon: 88 }], speed: 0.042 },
-  { name: "cross_basin_2", points: [{ lat: -8, lon: 55 }, { lat: -6, lon: 63 }, { lat: -5, lon: 72 }, { lat: -6, lon: 80 }, { lat: -7, lon: 88 }], speed: 0.038 },
-];
-
-function createFlowCurve(family) {
-  const oceanPoints = family.points.filter((p) => !isLand(p.lat, p.lon));
-  if (oceanPoints.length < 2) return null;
-  const vectors = oceanPoints.map((p) => latLonToVector(p.lat, p.lon));
-  return new THREE.CatmullRomCurve3(vectors, false, "catmullrom", 0.5);
-}
 
 /**
  * Build a spatial lookup from real U/V vectors for nearest-neighbour queries.
@@ -227,12 +203,7 @@ export default function RatnakaraCurrents({ depth = 0, currentVectors = null }) 
       }
     }
 
-    /* Fallback: synthetic flow paths */
-    return FLOW_FAMILIES.map((family, index) => {
-      const curve = createFlowCurve(family);
-      if (!curve) return null;
-      return { id: index, curve, speed: family.speed, phase: (index * 0.137) % 1 };
-    }).filter(Boolean);
+    return [];
   }, [currentVectors]);
 
   return (

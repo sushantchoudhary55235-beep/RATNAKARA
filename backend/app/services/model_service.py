@@ -12,8 +12,9 @@ from app.processing.model_processor import (
     DEFAULT_MAX_POINTS,
     get_variable_map,
     process_model_field,
+    get_model_capabilities,
 )
-from app.schemas.model import ModelFieldResponse
+from app.schemas.model import ModelCapabilitiesResponse, ModelFieldResponse
 
 
 def get_model_field(
@@ -39,3 +40,8 @@ def get_model_field(
         max_points=max_points,
     )
     return ModelFieldResponse(**data)
+
+
+def get_capabilities() -> ModelCapabilitiesResponse:
+    """Return model variables and actual selectable depth/time axes."""
+    return ModelCapabilitiesResponse(**get_model_capabilities())
