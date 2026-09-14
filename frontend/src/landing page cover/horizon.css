@@ -1,0 +1,232 @@
+/*
+  ORIGINAL HORIZON — landing page styles.
+
+  These are the styles for the original Horizon scroll scene
+  (horizon.jsx). They are landing-page ONLY and do not affect
+  the main Ratnakara application (App.jsx / App.css).
+*/
+
+.hero-container.cosmos-style {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  color: #ffffff;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.hero-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+}
+
+/* ---------------- Side menu ---------------- */
+
+.side-menu {
+  position: fixed;
+  top: 50%;
+  left: 32px;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.menu-icon {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.menu-icon span {
+  width: 22px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 2px;
+  display: block;
+}
+
+.vertical-text {
+  writing-mode: vertical-rl;
+  letter-spacing: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  text-transform: uppercase;
+}
+
+/* ---------------- Hero content ---------------- */
+
+.hero-content.cosmos-content {
+  position: fixed;
+  inset: 0;
+  z-index: 3; /* above the scroll spacers so buttons receive real clicks */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+/*
+  Single text block — currentSection swaps its content and the
+  key remount replays this fade-in, so only ONE section's text
+  is ever on screen.
+*/
+.hero-text-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: horizonTextFade 0.6s ease both;
+}
+
+@keyframes horizonTextFade {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-title {
+  margin: 0;
+  font-size: clamp(48px, 9vw, 130px);
+  font-weight: 200;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #f7f1e4; /* subtle warm-white instead of harsh pure white */
+  text-shadow: 0 0 24px rgba(200, 160, 90, 0.3);
+}
+
+.hero-subtitle.cosmos-subtitle {
+  margin-top: 26px;
+}
+
+.subtitle-line {
+  margin: 4px 0;
+  font-size: 14px;
+  font-weight: 300;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ---------------- Scroll progress ---------------- */
+
+.scroll-progress {
+  position: fixed;
+  right: 34px;
+  bottom: 34px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.scroll-text {
+  font-size: 10px;
+  letter-spacing: 5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.progress-track {
+  width: 160px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: rgba(140, 200, 255, 0.9);
+  box-shadow: 0 0 8px rgba(120, 180, 255, 0.8);
+  transition: width 0.15s linear;
+}
+
+.section-counter {
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ---------------- Scroll sections ---------------- */
+
+/*
+  Scroll spacers — they provide the scroll distance only.
+  They must never intercept clicks meant for the buttons in
+  the fixed content block above.
+*/
+.scroll-sections {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.content-section {
+  /* scroll spacer only — text lives in the fixed block above */
+  min-height: 100vh;
+}
+
+/* ---------------- Final RATNAKARA buttons ---------------- */
+
+/*
+  Only the final RATNAKARA section renders .horizon-actions.
+  Styled to fit the existing Horizon space look without
+  changing the Horizon animation or scene.
+*/
+
+.horizon-actions {
+  margin-top: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  pointer-events: auto;
+}
+
+.horizon-btn {
+  min-width: 170px;
+  padding: 13px 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(140, 200, 255, 0.45);
+  background: rgba(10, 20, 40, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.2s ease;
+}
+
+.horizon-btn:hover {
+  border-color: rgba(160, 215, 255, 0.85);
+  box-shadow: 0 0 18px rgba(120, 180, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.horizon-btn--primary {
+  background: rgba(140, 200, 255, 0.16);
+  border-color: rgba(160, 215, 255, 0.7);
+  color: #ffffff;
+}
+
+.horizon-btn--primary:hover {
+  background: rgba(140, 200, 255, 0.26);
+  box-shadow: 0 0 22px rgba(120, 180, 255, 0.4);
+}

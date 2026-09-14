@@ -1,10 +1,12 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { isLandPoint } from "../data/landMask";
 
 /* RATNAKARA CURRENT FLOW — REAL DATA VERSION
    Uses actual U/V current vectors from the NetCDF model dataset
-   to generate flow paths. It renders nothing when data is unavailable. */
+   to generate flow paths. Falls back to synthetic paths when
+   real data is not available. */
 
 const CURRENT_RADIUS = 2.044;
 const PARTICLES_PER_CURRENT = 6;
@@ -20,16 +22,40 @@ function latLonToVector(lat, lon, radius = CURRENT_RADIUS) {
   );
 }
 
+/*
+  Shared coastline mask (src/data/landMask.js).
+  The previous rectangle test treated the whole
+  lat 6-35 / lon 68-90 box as land, which deleted every
+  real-data flow path in the Arabian Sea and Bay of Bengal
+  and left only the synthetic fallbacks visible.
+*/
 function isLand(lat, lon) {
-  if (lat >= 6 && lat <= 35 && lon >= 68 && lon <= 90) return true;
-  if (lat >= 5.5 && lat <= 10.5 && lon >= 79 && lon <= 82.5) return true;
-  if (lat >= 12 && lat <= 30 && lon >= 35 && lon <= 60) return true;
-  if (lat >= -35 && lat <= 12 && lon >= 30 && lon <= 52) return true;
-  if (lat >= -8 && lat <= 20 && lon >= 95 && lon <= 120) return true;
-  if (lat >= -26 && lat <= -12 && lon >= 43 && lon <= 50) return true;
-  return false;
+  return isLandPoint(lat, lon);
 }
 
+/* Synthetic fallback paths (used when real data unavailable) */
+const FLOW_FAMILIES = [
+  { name: "arabian_sea_east", points: [{ lat: 10, lon: 52 }, { lat: 12, lon: 58 }, { lat: 14, lon: 64 }, { lat: 15, lon: 68 }, { lat: 13, lon: 72 }], speed: 0.04 },
+  { name: "arabian_sea_north", points: [{ lat: 5, lon: 55 }, { lat: 8, lon: 60 }, { lat: 12, lon: 65 }, { lat: 16, lon: 68 }], speed: 0.035 },
+  { name: "arabian_sea_south", points: [{ lat: 2, lon: 56 }, { lat: 4, lon: 62 }, { lat: 6, lon: 67 }, { lat: 8, lon: 72 }], speed: 0.038 },
+  { name: "bengal_north", points: [{ lat: 5, lon: 85 }, { lat: 8, lon: 87 }, { lat: 12, lon: 88 }, { lat: 16, lon: 87 }, { lat: 18, lon: 86 }], speed: 0.032 },
+  { name: "bengal_east", points: [{ lat: 3, lon: 88 }, { lat: 7, lon: 90 }, { lat: 12, lon: 92 }, { lat: 16, lon: 93 }], speed: 0.036 },
+  { name: "bengal_west", points: [{ lat: 6, lon: 82 }, { lat: 10, lon: 83 }, { lat: 14, lon: 84 }, { lat: 17, lon: 83 }], speed: 0.03 },
+  { name: "equatorial_east", points: [{ lat: -2, lon: 50 }, { lat: -1, lon: 58 }, { lat: 0, lon: 66 }, { lat: 1, lon: 74 }, { lat: 0, lon: 82 }, { lat: -1, lon: 90 }], speed: 0.045 },
+  { name: "equatorial_south", points: [{ lat: -5, lon: 52 }, { lat: -4, lon: 60 }, { lat: -3, lon: 68 }, { lat: -4, lon: 76 }, { lat: -5, lon: 84 }], speed: 0.04 },
+  { name: "south_east", points: [{ lat: -20, lon: 55 }, { lat: -18, lon: 62 }, { lat: -16, lon: 70 }, { lat: -15, lon: 78 }, { lat: -14, lon: 86 }], speed: 0.05 },
+  { name: "south_mid", points: [{ lat: -25, lon: 58 }, { lat: -23, lon: 65 }, { lat: -21, lon: 72 }, { lat: -20, lon: 80 }, { lat: -19, lon: 88 }], speed: 0.048 },
+  { name: "south_deep", points: [{ lat: -30, lon: 55 }, { lat: -28, lon: 63 }, { lat: -26, lon: 71 }, { lat: -25, lon: 79 }, { lat: -24, lon: 87 }], speed: 0.052 },
+  { name: "cross_basin_1", points: [{ lat: 3, lon: 55 }, { lat: 5, lon: 65 }, { lat: 6, lon: 72 }, { lat: 4, lon: 80 }, { lat: 2, lon: 88 }], speed: 0.042 },
+  { name: "cross_basin_2", points: [{ lat: -8, lon: 55 }, { lat: -6, lon: 63 }, { lat: -5, lon: 72 }, { lat: -6, lon: 80 }, { lat: -7, lon: 88 }], speed: 0.038 },
+];
+
+function createFlowCurve(family) {
+  const oceanPoints = family.points.filter((p) => !isLand(p.lat, p.lon));
+  if (oceanPoints.length < 2) return null;
+  const vectors = oceanPoints.map((p) => latLonToVector(p.lat, p.lon));
+  return new THREE.CatmullRomCurve3(vectors, false, "catmullrom", 0.5);
+}
 
 /**
  * Build a spatial lookup from real U/V vectors for nearest-neighbour queries.
@@ -105,10 +131,21 @@ function traceFlowPaths(vectors, stepDeg = 4.0, pathLength = 8, numSeeds = 20) {
 
       path.push({ latitude: lat, longitude: lon, u: v.u, v: v.v, speed });
 
-      /* Move in the direction of the current */
-      /* u = east-west (positive = east), v = north-south (positive = north) */
-      lat += v.v * stepDeg * 0.5;
-      lon += v.u * stepDeg * 0.5;
+      /*
+        Follow the vector DIRECTION (u = east, v = north) with a
+        fixed geographic step. Raw m/s values scaled by degrees
+        made strong currents jump multiple degrees per step while
+        weak currents barely moved; speed now only shortens the
+        path so flow length still reflects magnitude.
+      */
+      const stepScale =
+        stepDeg * Math.min(1, speed / 0.5);
+
+      lat += (v.v / speed) * stepScale;
+      lon += (v.u / speed) * stepScale;
+
+      /* Keep the trace inside the dataset window. */
+      if (lat < -40 || lat > 30 || lon < 30 || lon > 100) break;
     }
 
     if (path.length >= 2) {
@@ -171,6 +208,15 @@ function CurrentLine({ curve, speed, phase }) {
     lineRef.current.material.opacity = 0.18 + (Math.sin(time * 1.2 + phase) + 1) * 0.03;
   });
 
+  /* Dispose WebGL buffers when the layer unmounts
+     so repeated toggling never leaks GPU memory. */
+  useEffect(() => {
+    return () => {
+      if (geometry) geometry.dispose();
+      if (particleGeometry) particleGeometry.dispose();
+    };
+  }, [geometry, particleGeometry]);
+
   if (!geometry || !particleGeometry) return null;
 
   return (
@@ -185,7 +231,7 @@ function CurrentLine({ curve, speed, phase }) {
   );
 }
 
-export default function RatnakaraCurrents({ depth = 0, currentVectors = null }) {
+export default function RatnakaraCurrents({ currentVectors = null }) {
   const currents = useMemo(() => {
     /* If real U/V vectors are available, trace flow paths from them */
     if (currentVectors && currentVectors.length > 0) {
@@ -203,7 +249,18 @@ export default function RatnakaraCurrents({ depth = 0, currentVectors = null }) 
       }
     }
 
-    return [];
+    /* Fallback: synthetic flow paths */
+    return FLOW_FAMILIES.map((family, index) => {
+      const curve = createFlowCurve(family);
+      if (!curve) return null;
+      return { id: index, curve, speed: family.speed, phase: (index * 0.137) % 1 };
+    }).filter(Boolean);
+
+    /*
+      currentVectors is refetched per depth by App.jsx, so a
+      depth change always produces a new array identity and
+      rebuilds the paths — no depth dep needed here.
+    */
   }, [currentVectors]);
 
   return (

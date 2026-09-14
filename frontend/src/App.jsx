@@ -5,8 +5,8 @@ import {
 } from "@react-three/fiber";
 
 import {
+  Html,
   OrbitControls,
-  Stars,
 } from "@react-three/drei";
 
 import {
@@ -29,7 +29,9 @@ import TemperatureLegend from "./components/TemperatureLegend";
 import CurrentLegend from "./components/CurrentLegend";
 import LocationLabel from "./components/LocationLabel";
 import { COASTAL_ADVISORIES } from "./data/coastalAdvisories";
-import { fetchAlert, fetchChat, fetchHealth, fetchMetadata, fetchModelField, fetchObservations, fetchValidation } from "./services/api";
+import { fetchHealth, fetchMetadata, fetchModelField, fetchObservations, fetchValidation, fetchAlert, fetchChat } from "./services/api";
+import { isLandPoint } from "./data/landMask";
+import HorizonStars from "./components/HorizonStars";
 
 /*
   IMPORTANT:
@@ -469,40 +471,52 @@ const HIGH_TEMPERATURE_LIMIT = 31;
    TEMPERATURE COLOR THEORY
 ============================================================ */
 
+/*
+  Palette colors are allocated ONCE (module scope) instead of
+  creating new THREE.Color objects for every texture pixel —
+  the old per-pixel allocation made each rebuild visibly
+  pause (perceived layer flicker).
+*/
+const TEMPERATURE_COLOR_STOPS = [
+  {
+    temp: 4,
+    color: new THREE.Color("#0b3d91"),
+  },
+
+  {
+    temp: 12,
+    color: new THREE.Color("#00bcd4"),
+  },
+
+  {
+    temp: 18,
+    color: new THREE.Color("#fdd835"),
+  },
+
+  {
+    temp: 24,
+    color: new THREE.Color("#ff9800"),
+  },
+
+  {
+    temp: 28,
+    color: new THREE.Color("#f44336"),
+  },
+
+  {
+    temp: 34,
+    color: new THREE.Color("#880e4f"),
+  },
+];
+
+const TEMP_SCRATCH_COLOR = new THREE.Color();
+
+
 function temperatureToColor(
-  temperature
+  temperature,
+  outColor = null
 ) {
-  const stops = [
-    {
-      temp: 4,
-      color: new THREE.Color("#0b3d91"),
-    },
-
-    {
-      temp: 12,
-      color: new THREE.Color("#00bcd4"),
-    },
-
-    {
-      temp: 18,
-      color: new THREE.Color("#fdd835"),
-    },
-
-    {
-      temp: 24,
-      color: new THREE.Color("#ff9800"),
-    },
-
-    {
-      temp: 28,
-      color: new THREE.Color("#f44336"),
-    },
-
-    {
-      temp: 34,
-      color: new THREE.Color("#880e4f"),
-    },
-  ];
+  const stops = TEMPERATURE_COLOR_STOPS;
 
   const value =
     THREE.MathUtils.clamp(
@@ -510,6 +524,9 @@ function temperatureToColor(
       stops[0].temp,
       stops[stops.length - 1].temp
     );
+
+  const target =
+    outColor || TEMP_SCRATCH_COLOR;
 
   for (
     let i = 0;
@@ -524,76 +541,148 @@ function temperatureToColor(
         (value - lower.temp) /
         (upper.temp - lower.temp);
 
-      return lower.color.clone().lerp(
-        upper.color,
-        factor
-      );
+      return target
+        .copy(lower.color)
+        .lerp(upper.color, factor);
     }
   }
 
-  return stops[
-    stops.length - 1
-  ].color.clone();
+  return target.copy(
+    stops[stops.length - 1].color
+  );
 }
 
 
 /* ============================================================
-   REAL TEMPERATURE DATA LOOKUP
+   REAL TEMPERATURE DATA LOOKUP (BUCKETED INTERPOLATION)
 
-   Builds a spatial lookup from the backend model-field
-   response so that createTemperatureGeometry can use
-   real NetCDF values instead of the synthetic model.
+   The backend model-field response is a regular latitude/
+   longitude grid (CMEMS GLORYS, optionally downsampled by
+   the endpoint). Points are bucketed into a fixed 1-degree
+   spatial lattice ONCE per fetch; each texture pixel then
+   inverse-distance-blends the few grid points around it.
+
+   This replaces two previous problems:
+   - brute-force nearest-neighbour scans (O(points) per
+     pixel -> visible multi-second pause per rebuild), and
+   - nearest-POINT coloring, which drew hard Voronoi blobs
+     with steep jumps between adjacent grid cells.
+
+   The weighted blend gives the smooth continuous ocean
+   surface the layer is supposed to be, and the cutoff
+   radius lets it fade out at the true data edge.
+
+   Returns null, or { value, nearestDistanceSquared } so the
+   texture can feather pixel alpha near the data boundary.
 ============================================================ */
 
-function buildModelLookup(modelPoints) {
-  if (!modelPoints || modelPoints.length === 0) {
+const MODEL_LATTICE_CELL = 1;
+const MODEL_BLEND_CUTOFF_SQ = 4; /* ignore samples beyond 2 deg */
+const MODEL_BLEND_EPSILON = 0.0001;
+
+const MODEL_SAMPLE_OUT = {
+  value: 0,
+  nearestDistanceSquared: 0,
+};
+
+function buildTemperatureModelLookup(modelPoints) {
+  if (!Array.isArray(modelPoints) || modelPoints.length === 0) {
     return null;
   }
 
-  /*
-    Index by rounded lat/lon (1 decimal) for O(1) lookup.
-    The model grid is ~3.9 deg spacing so 1-decimal
-    rounding is safe for nearest-neighbour matching.
-  */
-  const map = new Map();
+  const buckets = new Map();
 
-  for (const pt of modelPoints) {
-    const key = `${pt.latitude.toFixed(1)},${pt.longitude.toFixed(1)}`;
+  for (const point of modelPoints) {
+    const pLat = Number(point?.latitude);
+    const pLon = Number(point?.longitude);
+    const pValue = Number(point?.value);
 
-    if (!map.has(key)) {
-      map.set(key, pt.value);
+    if (
+      !Number.isFinite(pLat) ||
+      !Number.isFinite(pLon) ||
+      !Number.isFinite(pValue)
+    ) {
+      continue;
     }
+
+    const key =
+      Math.floor(pLat / MODEL_LATTICE_CELL) +
+      "," +
+      Math.floor(pLon / MODEL_LATTICE_CELL);
+
+    let bucket = buckets.get(key);
+
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+
+    bucket.push({
+      latitude: pLat,
+      longitude: pLon,
+      value: pValue,
+    });
   }
 
-  return function getModelValue(lat, lon) {
-    /* Try exact rounded key first */
-    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
+  if (buckets.size === 0) {
+    return null;
+  }
 
-    if (map.has(key)) {
-      return map.get(key);
-    }
+  return function lookup(latitude, longitude, out = MODEL_SAMPLE_OUT) {
+    const centerLatCell = Math.floor(latitude / MODEL_LATTICE_CELL);
+    const centerLonCell = Math.floor(longitude / MODEL_LATTICE_CELL);
 
-    /*
-      Brute-force nearest neighbour (model grid is small,
-      max ~600 points — this runs once per vertex per
-      geometry build, not per frame).
-    */
-    let best = null;
-    let bestDist = Infinity;
+    let weightedValue = 0;
+    let totalWeight = 0;
+    let nearestDistanceSquared = Infinity;
 
-    for (const pt of modelPoints) {
-      const dlat = pt.latitude - lat;
-      const dlon = pt.longitude - lon;
-      const dist = dlat * dlat + dlon * dlon;
+    for (let dLat = -2; dLat <= 2; dLat++) {
+      for (let dLon = -2; dLon <= 2; dLon++) {
+        const bucket = buckets.get(
+          centerLatCell + dLat + "," + (centerLonCell + dLon)
+        );
 
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = pt.value;
+        if (!bucket) {
+          continue;
+        }
+
+        for (const point of bucket) {
+          let dLonValue = point.longitude - longitude;
+          if (dLonValue > 180) dLonValue -= 360;
+          if (dLonValue < -180) dLonValue += 360;
+
+          const dLatValue = point.latitude - latitude;
+
+          const distanceSquared =
+            dLatValue * dLatValue +
+            dLonValue * dLonValue;
+
+          if (distanceSquared > MODEL_BLEND_CUTOFF_SQ) {
+            continue;
+          }
+
+          if (distanceSquared < nearestDistanceSquared) {
+            nearestDistanceSquared = distanceSquared;
+          }
+
+          const weight =
+            1 /
+            (distanceSquared + MODEL_BLEND_EPSILON);
+
+          weightedValue += point.value * weight;
+          totalWeight += weight;
+        }
       }
     }
 
-    /* Only accept if within ~5 degrees (model grid spacing ~3.9°) */
-    return bestDist < 25 ? best : null;
+    if (totalWeight <= 0 || nearestDistanceSquared === Infinity) {
+      return null;
+    }
+
+    out.value = weightedValue / totalWeight;
+    out.nearestDistanceSquared = nearestDistanceSquared;
+
+    return out;
   };
 }
 
@@ -602,464 +691,1220 @@ function buildModelLookup(modelPoints) {
    OCEAN-ONLY REGION CHECK
 ============================================================ */
 
+/*
+  Results are memoized at 0.5-degree resolution: the mask is
+  coarse by design, and the texture loop hits ~65k pixels on
+  every depth change — caching keeps rebuilds fast, which is
+  part of the flicker fix.
+*/
+const OCEAN_REGION_CACHE = new Map();
+
 function isOceanRegion(lat, lon) {
-  if (
-    lat >= 6 &&
-    lat <= 35 &&
-    lon >= 68 &&
-    lon <= 90
-  ) {
-    return false;
+  /*
+    COASTLINE MASK (src/data/landMask.js):
+    The previous rectangle test treated lat 6-35 / lon 68-90
+    as land, which painted most of the Arabian Sea and the
+    Bay of Bengal as "land" and left the temperature field
+    an incomplete patch. The polygon mask follows the actual
+    Indian Ocean coastlines instead.
+  */
+  const key =
+    Math.round(lat * 2) * 1000 +
+    Math.round(lon * 2);
+
+  const cached = OCEAN_REGION_CACHE.get(key);
+
+  if (cached !== undefined) {
+    return cached;
   }
 
-  if (
-    lat >= 5.5 &&
-    lat <= 10.5 &&
-    lon >= 79 &&
-    lon <= 82.5
-  ) {
-    return false;
-  }
+  const result = !isLandPoint(lat, lon);
 
-  if (
-    lat >= 12 &&
-    lat <= 30 &&
-    lon >= 35 &&
-    lon <= 60
-  ) {
-    return false;
-  }
+  OCEAN_REGION_CACHE.set(key, result);
 
-  if (
-    lat >= -35 &&
-    lat <= 12 &&
-    lon >= 30 &&
-    lon <= 52
-  ) {
-    return false;
-  }
-
-  if (
-    lat >= -8 &&
-    lat <= 20 &&
-    lon >= 95 &&
-    lon <= 120
-  ) {
-    return false;
-  }
-
-  return true;
+  return result;
 }
 
 
 /* ============================================================
-   CONTINUOUS TEMPERATURE FIELD GEOMETRY
+   TEMPERATURE DATA HELPERS
+
+   The overlay is a real spherical surface, not a shell/rim effect.
+
+   Data priority per ocean cell:
+   1. Nearby Argo temperature observation
+   2. Backend model temperature point
+   3. Visual fallback only when neither source has data
+
+   IMPORTANT:
+   The temperature field is rendered slightly above Sentinel-2
+   and samples an equirectangular data texture using the sphere's
+   actual surface position -> latitude/longitude.
 ============================================================ */
 
-function createTemperatureGeometry(
-  depth = 0,
-  radius = 2.033,
-  modelPoints = []
+const TEMPERATURE_OVERLAY_RADIUS =
+  DETAIL_SATELLITE_RADIUS + 0.004;
+
+function getArgoTemperature(observation) {
+  if (!observation || typeof observation !== "object") {
+    return null;
+  }
+
+  const directKeys = [
+    "temperature",
+    "temp",
+    "sea_surface_temperature",
+    "temperature_c",
+    "temp_c",
+    "TEMP",
+    "TEMP_ADJUSTED",
+    "temp_adjusted",
+  ];
+
+  for (const key of directKeys) {
+    const value = Number(observation[key]);
+    if (Number.isFinite(value) && value >= -5 && value <= 45) {
+      return value;
+    }
+  }
+
+  /*
+    Some observation APIs return:
+      { variable: "temperature", value: 28.4 }
+  */
+  const variableName = String(
+    observation.variable ||
+    observation.parameter ||
+    observation.name ||
+    ""
+  ).toLowerCase();
+
+  if (
+    variableName.includes("temp") ||
+    variableName.includes("temperature")
+  ) {
+    const value = Number(observation.value);
+    if (Number.isFinite(value) && value >= -5 && value <= 45) {
+      return value;
+    }
+  }
+
+  /*
+    Support a simple nested measurement array if the backend
+    exposes Argo profile samples this way.
+  */
+  const measurements =
+    observation.measurements ||
+    observation.profile ||
+    observation.data;
+
+  if (Array.isArray(measurements)) {
+    let shallowest = null;
+
+    for (const sample of measurements) {
+      if (!sample || typeof sample !== "object") continue;
+
+      const sampleTemperature =
+        Number(
+          sample.temperature ??
+          sample.temp ??
+          sample.TEMP ??
+          sample.TEMP_ADJUSTED
+        );
+
+      if (
+        !Number.isFinite(sampleTemperature) ||
+        sampleTemperature < -5 ||
+        sampleTemperature > 45
+      ) {
+        continue;
+      }
+
+      const sampleDepth =
+        Number(
+          sample.depth ??
+          sample.pressure ??
+          sample.z ??
+          999999
+        );
+
+      if (
+        !Number.isFinite(sampleDepth) ||
+        sampleDepth < 0
+      ) {
+        continue;
+      }
+
+      if (
+        shallowest === null ||
+        sampleDepth < shallowest.depth
+      ) {
+        shallowest = {
+          depth: sampleDepth,
+          temperature: sampleTemperature,
+        };
+      }
+    }
+
+    if (shallowest) {
+      return shallowest.temperature;
+    }
+  }
+
+  return null;
+}
+
+
+/* ============================================================
+   ARGO WEIGHTED TEMPERATURE
+============================================================ */
+
+/*
+  Build a depth-filtered list of Argo temperature samples
+  near the requested depth. Argo returns one row per
+  pressure level (0-2000 dbar); without filtering, surface
+  and deep-water temperatures were averaged together.
+*/
+function collectDepthFilteredArgo(
+  argoObservations,
+  depth
 ) {
-  const latStart = -35;
-  const latEnd = 28;
+  if (
+    !Array.isArray(argoObservations) ||
+    argoObservations.length === 0
+  ) {
+    return [];
+  }
 
-  const lonStart = 45;
-  const lonEnd = 100;
+  const samples = [];
 
-  const step = 2.0;
+  for (const observation of argoObservations) {
+    const oLat = Number(observation?.latitude);
+    const oLon = Number(observation?.longitude);
+    const oDepth = Number(observation?.depth);
+    const temperature = getArgoTemperature(observation);
 
-  const effectiveRadius =
-    Math.max(
-      radius,
-      DETAIL_SATELLITE_RADIUS + 0.004
+    if (
+      !Number.isFinite(oLat) ||
+      !Number.isFinite(oLon) ||
+      !Number.isFinite(temperature)
+    ) {
+      continue;
+    }
+
+    /* Observed depth is in dbar (~ metres); the model grid
+       uses metres. Tolerance covers sparse float sampling. */
+    if (
+      Number.isFinite(oDepth) &&
+      Math.abs(oDepth - depth) > 50
+    ) {
+      continue;
+    }
+
+    samples.push({
+      latitude: oLat,
+      longitude: oLon,
+      temperature,
+    });
+  }
+
+  return samples;
+}
+
+
+/*
+  Gaussian-weighted scatter-field interpolation over the
+  depth-filtered Argo samples.
+
+  Samples are bucketed into a coarse 5-degree lat/lon lattice
+  ONCE per texture build; a pixel then blends only the few
+  floats in its surrounding cells instead of scanning every
+  sample (the old O(samples) per-pixel scan stalled each
+  rebuild — the visible flicker).
+
+  Returns null, or { value, confidence } where confidence
+  (0-1, from the weight mass) feathers pixel alpha so the
+  field fades where floats are sparse instead of ending in
+  hard edges or holes.
+*/
+
+const ARGO_LATTICE_CELL = 5;
+const ARGO_BLEND_CUTOFF_SQ = 100; /* 10-degree reach, as before */
+const ARGO_BLEND_SIGMA_SQ = 32; /* 2 * sigma², sigma = 4 deg */
+
+const ARGO_SAMPLE_OUT = { value: 0, confidence: 0 };
+
+function buildArgoTemperatureLookup(argoSamples) {
+  if (
+    !Array.isArray(argoSamples) ||
+    argoSamples.length === 0
+  ) {
+    return null;
+  }
+
+  const buckets = new Map();
+
+  for (const sample of argoSamples) {
+    const sLat = Number(sample?.latitude);
+    const sLon = Number(sample?.longitude);
+    const sValue = Number(sample?.temperature);
+
+    if (
+      !Number.isFinite(sLat) ||
+      !Number.isFinite(sLon) ||
+      !Number.isFinite(sValue)
+    ) {
+      continue;
+    }
+
+    const key =
+      Math.floor(sLat / ARGO_LATTICE_CELL) +
+      "," +
+      Math.floor(sLon / ARGO_LATTICE_CELL);
+
+    let bucket = buckets.get(key);
+
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+
+    bucket.push({
+      latitude: sLat,
+      longitude: sLon,
+      value: sValue,
+    });
+  }
+
+  if (buckets.size === 0) {
+    return null;
+  }
+
+  /*
+    ±2 cells of a 5-degree lattice covers the original
+    10-degree gaussian reach.
+  */
+  return function lookup(latitude, longitude, out = ARGO_SAMPLE_OUT) {
+    const centerLatCell = Math.floor(latitude / ARGO_LATTICE_CELL);
+    const centerLonCell = Math.floor(longitude / ARGO_LATTICE_CELL);
+
+    let weightedTemperature = 0;
+    let totalWeight = 0;
+
+    for (let dLat = -2; dLat <= 2; dLat++) {
+      for (let dLon = -2; dLon <= 2; dLon++) {
+        const bucket = buckets.get(
+          centerLatCell + dLat + "," + (centerLonCell + dLon)
+        );
+
+        if (!bucket) {
+          continue;
+        }
+
+        for (const sample of bucket) {
+          let dLonValue = sample.longitude - longitude;
+          if (dLonValue > 180) dLonValue -= 360;
+          if (dLonValue < -180) dLonValue += 360;
+
+          const distanceSquared =
+            (sample.latitude - latitude) *
+              (sample.latitude - latitude) +
+            dLonValue * dLonValue;
+
+          if (distanceSquared > ARGO_BLEND_CUTOFF_SQ) {
+            continue;
+          }
+
+          const weight = Math.exp(
+            -distanceSquared / ARGO_BLEND_SIGMA_SQ
+          );
+
+          weightedTemperature += sample.value * weight;
+          totalWeight += weight;
+        }
+      }
+    }
+
+    if (totalWeight <= 0) {
+      return null;
+    }
+
+    out.value = weightedTemperature / totalWeight;
+    out.confidence = Math.min(totalWeight, 1);
+
+    return out;
+  };
+}
+
+
+/* ============================================================
+   FALLBACK ONLY
+============================================================ */
+
+function createTemperatureFallback(
+  latitude,
+  longitude,
+  depth
+) {
+  const latitudeWarmth =
+    31.5 -
+    Math.abs(latitude - 5) * 0.26;
+
+  const basinVariation =
+    Math.sin(
+      (longitude + 35) *
+        Math.PI /
+        55
+    ) * 1.8 +
+    Math.cos(
+      (longitude - 80) *
+        Math.PI /
+        95
+    ) * 1.2;
+
+  const equatorialWarmBand =
+    Math.exp(
+      -Math.pow(
+        (latitude - 2) / 12,
+        2
+      )
+    ) * 2.2;
+
+  const depthCooling =
+    Math.min(depth, 2000) * 0.004;
+
+  return THREE.MathUtils.clamp(
+    latitudeWarmth +
+      basinVariation +
+      equatorialWarmBand -
+      depthCooling,
+    4,
+    34
+  );
+}
+
+
+/* ============================================================
+   TEMPERATURE DATA TEXTURE
+
+   Equirectangular RGBA texture:
+     RGB = final temperature color
+     A   = ocean-data visibility mask
+
+   The shader below samples this using the actual sphere surface
+   position, so the colors stay on the curved globe instead of
+   becoming a camera-facing/rim effect.
+============================================================ */
+
+/* ============================================================
+   DATASET FOOTPRINT
+
+   Geographic bounding box of the actual backend data (Argo
+   observations + model grid). The temperature field is painted
+   ONLY inside this extent — a pixel outside the dataset is
+   never colored, so continents far from any measurement can
+   never receive a temperature value.
+============================================================ */
+
+function buildDatasetFootprint(
+  modelPoints,
+  argoSamples,
+  padDegrees = 8
+) {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  let hasData = false;
+
+  const consider = (lat, lon) => {
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon)
+    ) {
+      return;
+    }
+
+    hasData = true;
+
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+  };
+
+  for (const point of modelPoints || []) {
+    consider(
+      Number(point?.latitude),
+      Number(point?.longitude)
+    );
+  }
+
+  for (const sample of argoSamples || []) {
+    consider(
+      sample.latitude,
+      sample.longitude
+    );
+  }
+
+  if (!hasData) {
+    return null;
+  }
+
+  /*
+    Pad by the interpolation reach so the field ends where
+    the data reasonably fades out, not at the raw points.
+  */
+  return {
+    minLat: minLat - padDegrees,
+    maxLat: maxLat + padDegrees,
+    minLon: minLon - padDegrees,
+    maxLon: maxLon + padDegrees,
+  };
+}
+
+
+function createTemperatureDataTexture({
+  depth = 0,
+  modelPoints = [],
+  argoObservations = [],
+}) {
+  const width = 512;
+  const height = 256;
+
+  const pixels =
+    new Uint8Array(
+      width * height * 4
     );
 
-  const positions = [];
-  const colors = [];
-  const alphas = [];
-  const indices = [];
+  /*
+    Drop any observation whose coordinate falls on land so a
+    bad row can never bleed color onto a coastline. One-time
+    cost, never per frame.
+  */
+  const oceanArgoObservations =
+    Array.isArray(argoObservations)
+      ? argoObservations.filter(
+          (observation) => {
+            const oLat =
+              Number(
+                observation?.latitude
+              );
 
-  const latCount =
-    Math.round(
-      (latEnd - latStart) / step
-    ) + 1;
+            const oLon =
+              Number(
+                observation?.longitude
+              );
 
-  const lonCount =
-    Math.round(
-      (lonEnd - lonStart) / step
-    ) + 1;
+            return (
+              Number.isFinite(oLat) &&
+              Number.isFinite(oLon) &&
+              isOceanRegion(oLat, oLon)
+            );
+          }
+        )
+      : [];
 
-  const latMin =
-    latStart + 4;
-
-  const latMax =
-    latEnd - 4;
-
-  const lonMin =
-    lonStart + 4;
-
-  const lonMax =
-    lonEnd - 4;
+  /*
+    Same for model grid points.
+  */
+  const oceanModelPoints =
+    modelPoints.filter((point) => {
+      const pLat = Number(point?.latitude);
+      const pLon = Number(point?.longitude);        return (
+          Number.isFinite(pLat) &&
+          Number.isFinite(pLon) &&
+          isOceanRegion(pLat, pLon)
+        );
+    });
 
   const modelLookup =
-    modelPoints.length > 0
-      ? buildModelLookup(modelPoints)
+    buildTemperatureModelLookup(
+      oceanModelPoints
+    );
+
+  /*
+    Depth-filtered Argo samples for the requested level.
+  */
+  const argoWithTemperature =
+    collectDepthFilteredArgo(
+      oceanArgoObservations,
+      depth
+    );
+
+  /*
+    Both data lookups bucket their samples ONCE per texture
+    build (never per pixel, never per frame), so a depth
+    change rebuilds the field quickly instead of freezing —
+    the visible flicker.
+  */
+  const argoTemperatureLookup =
+    buildArgoTemperatureLookup(
+      argoWithTemperature
+    );
+
+  /*
+    Extent of the data actually used for this texture.
+
+    The footprint gate applies ONLY when real model-grid data
+    exists (the grid defines the true dataset extent). In demo
+    mode (model NetCDF unavailable, backend serves a few demo
+    Argo rows) the footprint would shrink the field to a tiny
+    patch around the demo floats — instead the existing Indian
+    Ocean fallback field is retained, still ocean-masked.
+  */
+  const datasetFootprint =
+    oceanModelPoints.length > 0
+      ? buildDatasetFootprint(
+          oceanModelPoints,
+          argoWithTemperature
+        )
       : null;
 
-  for (
-    let latIndex = 0;
-    latIndex < latCount;
-    latIndex++
-  ) {
+  for (let y = 0; y < height; y++) {
+    /*
+      DataTexture.flipY is false, so row 0 samples at
+      v = 0 (the south pole). Row y must hold latitude
+      -90 -> +90, not the previous +90 -> -90 ordering
+      that rendered the field upside-down.
+    */
     const latitude =
-      latStart +
-      latIndex * step;
+      -90 +
+      (y / (height - 1)) *
+        180;
 
-    for (
-      let lonIndex = 0;
-      lonIndex < lonCount;
-      lonIndex++
-    ) {
-      const longitude =
-        lonStart +
-        lonIndex * step;
+    for (let x = 0; x < width; x++) {
+      let longitude =
+        (x / (width - 1)) *
+          360 -
+        180;
 
+      if (longitude > 180) {
+        longitude -= 360;
+      }
+
+      const pixelIndex =
+        (y * width + x) * 4;
+
+      /*
+        LAND MASK:
+        Reuse the existing project mask so temperature colors
+        remain on ocean surfaces rather than continents.
+      */
       const ocean =
         isOceanRegion(
           latitude,
           longitude
         );
 
-      /*
-        Use real backend data when available,
-        fall back to inline synthetic while loading.
-      */
-      let temperature;
+      if (!ocean) {
+        pixels[pixelIndex] = 0;
+        pixels[pixelIndex + 1] = 0;
+        pixels[pixelIndex + 2] = 0;
+        pixels[pixelIndex + 3] = 0;
+        continue;
+      }
 
-      if (modelLookup) {
-        temperature = modelLookup(
+      /*
+        DATASET FOOTPRINT:
+        Outside every backend data source the pixel stays
+        transparent (alpha 0 -> shader discards), leaving
+        Sentinel-2 imagery completely untouched.
+      */
+      if (
+        datasetFootprint &&
+        (latitude <
+          datasetFootprint.minLat ||
+          latitude >
+            datasetFootprint.maxLat ||
+          longitude <
+            datasetFootprint.minLon ||
+          longitude >
+            datasetFootprint.maxLon)
+      ) {
+        continue;
+      }
+
+      /*
+        SOURCE PRIORITY:
+        Argo observations take priority over the model around
+        their actual locations. Each lookup returns null
+        outside its data reach plus a confidence/feather
+        factor, so the field fades where data thins out
+        instead of ending in a hard edge.
+      */
+      let temperature = null;
+      let alphaFactor = 0;
+
+      const argoSample =
+        argoTemperatureLookup &&
+        argoTemperatureLookup(
           latitude,
           longitude
         );
 
-        if (temperature === null) {
-          /* Model has no data here (land) — skip */
-          alphas.push(0.0);
-          positions.push(0, 0, 0);
-          colors.push(0, 0, 0);
-          continue;
-        }
-      }
-      else {
-        /* No model value: leave the cell transparent until real data arrives. */
-        alphas.push(0.0);
-        positions.push(0, 0, 0);
-        colors.push(0, 0, 0);
-        continue;
+      if (argoSample) {
+        temperature = argoSample.value;
+        alphaFactor = argoSample.confidence;
       }
 
-      const position =
-        satelliteLatLonToVector(
+      if (
+        temperature === null &&
+        modelLookup
+      ) {
+        const modelSample = modelLookup(
           latitude,
-          longitude,
-          effectiveRadius
+          longitude
         );
+
+        if (modelSample) {
+          temperature = modelSample.value;
+
+          /*
+            Feather: full strength within ~0.5 deg of a real
+            grid point, fading to nothing at ~2 deg.
+          */
+          alphaFactor =
+            1 -
+            THREE.MathUtils.smoothstep(
+              modelSample.nearestDistanceSquared,
+              0.25,
+              4
+            );
+        }
+      }
+
+      if (temperature === null) {
+        if (datasetFootprint) {
+          /*
+            Inside the data footprint but no observation
+            reached this pixel: stay transparent instead of
+            inventing a value. This is what previously let the
+            synthetic fallback wash over landmasses.
+          */
+          continue;
+        }
+
+        /*
+          No backend data at all (demo mode): retain the
+          existing Indian Ocean fallback, still ocean-masked
+          by the coastline polygons above.
+        */
+        temperature =
+          createTemperatureFallback(
+            latitude,
+            longitude,
+            depth
+          );
+
+        alphaFactor = 1;
+      }
+
+      if (alphaFactor < 0.05) {
+        continue;
+      }
 
       const color =
         temperatureToColor(
           temperature
         );
 
-      positions.push(
-        position.x,
-        position.y,
-        position.z
-      );
+      pixels[pixelIndex] =
+        Math.round(color.r * 255);
 
-      colors.push(
-        color.r,
-        color.g,
-        color.b
-      );
+      pixels[pixelIndex + 1] =
+        Math.round(color.g * 255);
 
-      let alpha = 1.0;
+      pixels[pixelIndex + 2] =
+        Math.round(color.b * 255);
 
-      if (!ocean) {
-        alpha = 0.0;
-      }
-
-      else {
-        const latFade =
-          Math.min(
-            (latitude - latMin) / 4,
-            (latMax - latitude) / 4,
-            1.0
-          );
-
-        const lonFade =
-          Math.min(
-            (longitude - lonMin) / 4,
-            (lonMax - longitude) / 4,
-            1.0
-          );
-
-        alpha =
-          Math.min(
-            latFade,
-            lonFade
-          );
-      }
-
-      alphas.push(alpha);
-    }
-  }
-
-  for (
-    let latIndex = 0;
-    latIndex < latCount - 1;
-    latIndex++
-  ) {
-    for (
-      let lonIndex = 0;
-      lonIndex < lonCount - 1;
-      lonIndex++
-    ) {
-      const a =
-        latIndex *
-          lonCount +
-        lonIndex;
-
-      const b = a + 1;
-      const c = a + lonCount;
-      const d = c + 1;
-
-      indices.push(
-        a,
-        c,
-        b
-      );
-
-      indices.push(
-        b,
-        c,
-        d
+      /*
+        Semi-transparent so Sentinel-2 imagery remains
+        visible through the thermal field. The alpha is
+        scaled by how well-supported the value is, which
+        feathers the data boundary.
+      */
+      pixels[pixelIndex + 3] = Math.round(
+        208 * alphaFactor
       );
     }
   }
 
-  const geometry =
-    new THREE.BufferGeometry();
+  const texture =
+    new THREE.DataTexture(
+      pixels,
+      width,
+      height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
 
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(
-      positions,
-      3
-    )
-  );
+  /*
+    Palette hexes are baked as raw sRGB bytes and the custom
+    shader writes them straight to the framebuffer, so the
+    on-globe colors match the TemperatureLegend stops
+    exactly. Marking the texture sRGB would double-encode
+    and visibly darken the field.
+  */
 
-  geometry.setAttribute(
-    "color",
-    new THREE.Float32BufferAttribute(
-      colors,
-      3
-    )
-  );
+  texture.wrapS =
+    THREE.RepeatWrapping;
 
-  geometry.setAttribute(
-    "alpha",
-    new THREE.Float32BufferAttribute(
-      alphas,
-      1
-    )
-  );
+  texture.wrapT =
+    THREE.ClampToEdgeWrapping;
 
-  geometry.setIndex(indices);
+  texture.minFilter =
+    THREE.LinearFilter;
 
-  geometry.computeVertexNormals();
+  texture.magFilter =
+    THREE.LinearFilter;
 
-  return geometry;
+  texture.generateMipmaps =
+    false;
+
+  texture.needsUpdate =
+    true;
+
+  return texture;
 }
 
 
 /* ============================================================
-   TEMPERATURE LAYER
+   TEMPERATURE SURFACE
 ============================================================ */
 
 function TemperatureLayer({
   depth = 0,
-  radius = 2.033,
+  radius =
+    TEMPERATURE_OVERLAY_RADIUS,
   modelPoints = [],
+  argoObservations = [],
 }) {
   const materialRef =
     useRef(null);
 
-  const liftRef =
-    useRef(0);
-
-  const fadeInRef =
-    useRef(0);
-
-  const activatedRef =
-    useRef(false);
-
-  const geometry =
+  const texture =
     useMemo(
       () =>
-        createTemperatureGeometry(
+        createTemperatureDataTexture({
           depth,
-          radius,
-          modelPoints
-        ),
-      [depth, radius, modelPoints]
+          modelPoints,
+          argoObservations,
+        }),
+      [
+        depth,
+        modelPoints,
+        argoObservations,
+      ]
     );
 
+  useEffect(() => {
+    return () => {
+      texture.dispose();
+    };
+  }, [texture]);
+
   useFrame(
-    (state, delta) => {
+    ({ clock }) => {
       if (!materialRef.current) {
         return;
       }
 
-      const uniforms =
-        materialRef.current.uniforms;
-
-      uniforms.uTime.value =
-        state.clock.elapsedTime;
-
-      if (
-        !activatedRef.current
-      ) {
-        activatedRef.current =
-          true;
-      }
-
-      if (
-        liftRef.current < 1
-      ) {
-        liftRef.current =
-          Math.min(
-            1,
-            liftRef.current +
-              delta * 1.2
-          );
-
-        uniforms.uLift.value =
-          liftRef.current;
-      }
-
-      if (
-        fadeInRef.current < 1
-      ) {
-        fadeInRef.current =
-          Math.min(
-            1,
-            fadeInRef.current +
-              delta * 1.5
-          );
-
-        uniforms.uFadeIn.value =
-          fadeInRef.current;
-      }
+      materialRef.current.uniforms.uTime.value =
+        clock.elapsedTime;
     }
   );
 
-  useEffect(() => {
-    return () => {
-      geometry.dispose();
-    };
-  }, [geometry]);
-
   return (
     <mesh
-      geometry={geometry}
-      renderOrder={25}
+      renderOrder={60}
       frustumCulled={false}
     >
+      {/*
+        A true sphere surface. No custom grid geometry and no
+        camera-facing plane, so the field follows the globe.
+      */}
+      <sphereGeometry
+        args={[
+          radius,
+          256,
+          128,
+        ]}
+      />
+
       <shaderMaterial
         ref={materialRef}
         transparent
         depthWrite={false}
         depthTest={true}
-        vertexColors
+        side={THREE.FrontSide}
+        blending={THREE.NormalBlending}
         uniforms={{
+          uTemperature: {
+            value: texture,
+          },
           uTime: {
-            value: 0,
-          },
-
-          uLift: {
-            value: 0,
-          },
-
-          uFadeIn: {
             value: 0,
           },
         }}
         vertexShader={`
-          attribute float alpha;
-          uniform float uLift;
-
-          varying vec3 vColor;
-          varying vec3 vNormal;
-          varying float vAlpha;
+          varying vec3 vSurfacePosition;
 
           void main() {
-            vColor = color;
-            vNormal = normalize(normalMatrix * normal);
-            vAlpha = alpha;
-
-            float liftAmount =
-              uLift * 0.008;
-
-            vec3 displaced =
-              position +
-              normal * liftAmount;
+            vSurfacePosition =
+              normalize(position);
 
             gl_Position =
               projectionMatrix *
               modelViewMatrix *
-              vec4(displaced, 1.0);
+              vec4(
+                position,
+                1.0
+              );
           }
         `}
         fragmentShader={`
-          uniform float uTime;
-          uniform float uFadeIn;
+          uniform sampler2D
+            uTemperature;
 
-          varying vec3 vColor;
-          varying vec3 vNormal;
-          varying float vAlpha;
+          uniform float
+            uTime;
+
+          varying vec3
+            vSurfacePosition;
 
           void main() {
-            if (vAlpha < 0.01)
+            vec3 p =
+              normalize(
+                vSurfacePosition
+              );
+
+            /*
+              This must match satelliteLatLonToVector():
+                theta = longitude + 70°
+            */
+            float latitude =
+              asin(
+                clamp(
+                  p.y,
+                  -1.0,
+                  1.0
+                )
+              );
+
+            float longitude =
+              atan(
+                p.x,
+                p.z
+              ) -
+              radians(70.0);
+
+            /*
+              Keep longitude in
+              [-PI, PI].
+            */
+            if (longitude < -3.14159265) {
+              longitude +=
+                6.28318530;
+            }
+
+            if (longitude > 3.14159265) {
+              longitude -=
+                6.28318530;
+            }
+
+            float u =
+              longitude /
+                6.28318530 +
+              0.5;
+
+            float v =
+              latitude /
+                3.14159265 +
+              0.5;
+
+            /*
+              Clamp V and wrap U.
+            */
+            v =
+              clamp(
+                v,
+                0.001,
+                0.999
+              );
+
+            vec4 field =
+              texture2D(
+                uTemperature,
+                vec2(
+                  fract(u),
+                  v
+                )
+              );
+
+            if (field.a < 0.03) {
               discard;
+            }
 
-            float wave =
+            /*
+              Subtle movement ONLY in brightness.
+              The scientific temperature position/value is not
+              moved around by the animation.
+            */
+            float flow1 =
               sin(
-                vColor.r * 10.0 +
-                uTime * 0.4
-              ) * 0.03;
+                p.x * 17.0 +
+                p.z * 9.0 +
+                p.y * 7.0 +
+                uTime * 0.35
+              );
 
-            float brightness =
-              0.97 + wave;
+            float flow2 =
+              sin(
+                p.z * 23.0 -
+                p.x * 13.0 +
+                uTime * 0.22
+              );
+
+            float shimmer =
+              1.0 +
+              flow1 * 0.018 +
+              flow2 * 0.010;
 
             vec3 finalColor =
-              vColor * brightness;
-
-            float finalAlpha =
-              vAlpha *
-              uFadeIn *
-              0.62;
+              clamp(
+                field.rgb *
+                shimmer,
+                0.0,
+                1.0
+              );
 
             gl_FragColor =
               vec4(
                 finalColor,
-                finalAlpha
+                field.a * 0.92
               );
           }
         `}
         toneMapped={false}
       />
     </mesh>
+  );
+}
+
+
+/* ============================================================
+   SALINITY POINT INFO — ANCHORED
+
+   Small data box pinned to the clicked marker via drei's
+   Html (renders in DOM but tracks the 3D point). Replaces
+   the old bottom-right floating overlay.
+============================================================ */
+
+function AnchoredSalinityInfo({
+  point,
+  onClose = null,
+  lightMode = false,
+  /*
+    Optional overrides so other point layers (e.g. Sea Surface
+    Height) can reuse this anchored info box without duplicating
+    it. Defaults preserve the existing Salinity behavior.
+  */
+  title = "SALINITY",
+  unitLabel = "PSU",
+  sourceLabel = "CMEMS model grid",
+}) {
+  const pos = useMemo(
+    () =>
+      satelliteLatLonToVector(
+        point.latitude,
+        point.longitude,
+        2.04
+      ),
+    [point.latitude, point.longitude]
+  );
+
+  return (
+    <group position={pos}>
+      <Html
+        center
+        distanceFactor={8}
+        zIndexRange={[40, 30]}
+        style={{
+          pointerEvents: "auto",
+        }}
+      >
+        <div
+          className={
+            lightMode
+              ? "salinity-info light"
+              : "salinity-info"
+          }
+        >
+          <div className="salinity-info-head">
+
+            <div>
+              {title}
+            </div>
+
+            <button
+              type="button"
+              className="salinity-info-close"
+              onClick={onClose || undefined}
+              aria-label="Close salinity details"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="salinity-info-value">
+            {point.value.toFixed(2)} {unitLabel}
+          </div>
+
+          <div className="salinity-info-row">
+            <span>Latitude</span>
+            <span>
+              {point.latitude.toFixed(2)}°N
+            </span>
+          </div>
+
+          <div className="salinity-info-row">
+            <span>Longitude</span>
+            <span>
+              {point.longitude.toFixed(2)}°E
+            </span>
+          </div>
+
+          <div className="salinity-info-row">
+            <span>Depth</span>
+            <span>{point.depth} m</span>
+          </div>
+
+          <div className="salinity-info-row">
+            <span>Source</span>
+            <span>{sourceLabel}</span>
+          </div>
+
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+
+/* ============================================================
+   SALINITY LAYER
+
+   Small ocean-only markers driven by real salinity values
+   from the backend model-field API. Clicking a marker shows
+   the actual dataset value — no invented data.
+============================================================ */
+
+function SalinityLayer({
+  points = [],
+  depth = 0,
+  onSelect = null,
+}) {
+  const meshRef =
+    useRef(null);
+
+  const MARKER_RADIUS = 2.04;
+  const MARKER_SIZE = 0.014;
+
+  const count = points.length;
+
+  /*
+    Instance matrices are written in an effect (not useMemo)
+    so the mesh ref is guaranteed to be attached — on first
+    mount the ref is still null during render.
+  */
+  useEffect(() => {
+    if (!meshRef.current || count === 0) return;
+
+    const dummy = new THREE.Object3D();
+
+    for (let i = 0; i < count; i++) {
+      const pt = points[i];
+
+      /* Points come from the model-field grid; keep only
+         genuine ocean locations. */
+      if (isOceanRegion(pt.latitude, pt.longitude)) {
+        const pos = satelliteLatLonToVector(
+          pt.latitude,
+          pt.longitude,
+          MARKER_RADIUS
+        );
+
+        dummy.position.copy(pos);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+      } else {
+        /* Park land instances at the globe centre. */
+        dummy.position.set(0, 0, 0);
+        dummy.scale.setScalar(0.0001);
+        dummy.updateMatrix();
+
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+      }
+    }
+
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [points, count]);
+
+  /*
+    Very subtle breathing so the field feels alive.
+    Scales only the visual size — never the data — and stays
+    tiny/slow per the ocean-drift requirement.
+  */
+  useFrame(({ clock }) => {
+    if (!meshRef.current || count === 0) return;
+
+    const t = clock.elapsedTime;
+    const pulse = 0.95 + Math.sin(t * 0.6) * 0.05;
+
+    meshRef.current.scale.setScalar(pulse);
+  });
+
+  if (count === 0) return null;
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[null, null, count]}
+      frustumCulled={false}
+      renderOrder={28}
+      onClick={(event) => {
+        if (!onSelect) return;
+
+        const index = event.instanceId;
+
+        if (index !== undefined && points[index]) {
+          event.stopPropagation();
+
+          /*
+            Model-field points carry no per-point depth; the
+            request depth is the true depth of every value in
+            this batch, so attach it for the info box.
+          */
+          onSelect({
+            ...points[index],
+            depth,
+          });
+        }
+      }}
+    >
+      <sphereGeometry args={[MARKER_SIZE, 8, 8]} />
+      <meshBasicMaterial
+        color="#ffffff"
+        transparent
+        opacity={0.8}
+        depthWrite={false}
+        depthTest={true}
+        toneMapped={false}
+      />
+    </instancedMesh>
   );
 }
 
@@ -1254,6 +2099,15 @@ function SatelliteTile({
     setFailed,
   ] = useState(false);
 
+  /*
+    SMOOTH TILE FADE-IN:
+    Each tile starts fully transparent and animates to opaque
+    once its texture arrives, so tiles crossfade over the base
+    globe instead of popping in one by one.
+  */
+  const meshRef = useRef(null);
+  const fadeRef = useRef(0);
+
   const tileCountY =
     wgs84TileCountY(
       zoom
@@ -1388,6 +2242,35 @@ function SatelliteTile({
         )
       : null;
 
+  /*
+    Tiles fade in from the base globe color — never pop.
+  */
+  if (material) {
+    material.transparent = true;
+    material.opacity = fadeRef.current;
+  }
+
+  useFrame((_, delta) => {
+    const mesh = meshRef.current;
+
+    if (!mesh || fadeRef.current >= 1) {
+      return;
+    }
+
+    fadeRef.current = Math.min(
+      1,
+      fadeRef.current + delta * 1.8
+    );
+
+    mesh.material.opacity = fadeRef.current;
+
+    if (fadeRef.current >= 1) {
+      /* Fully faded: back to opaque fast-path rendering. */
+      mesh.material.transparent = false;
+      mesh.material.opacity = 1;
+    }
+  });
+
   useEffect(() => {
     if (
       !geometry ||
@@ -1417,6 +2300,7 @@ function SatelliteTile({
 
   return (
     <mesh
+      ref={meshRef}
       geometry={geometry}
       material={material}
       renderOrder={
@@ -1425,6 +2309,29 @@ function SatelliteTile({
           ? 20
           : 10
       }
+    />
+  );
+}
+
+
+/* ============================================================
+   SEA SURFACE HEIGHT LAYER
+
+   Reuses the Salinity marker architecture with the new
+   sea_surface_height variable from the same model-field API.
+   Rendered only while the layer is active.
+============================================================ */
+
+function SeaSurfaceHeightLayer({
+  points = [],
+  depth = 0,
+  onSelect = null,
+}) {
+  return (
+    <SalinityLayer
+      points={points}
+      depth={depth}
+      onSelect={onSelect}
     />
   );
 }
@@ -1851,9 +2758,10 @@ function ArgoMarkers({ observations = [] }) {
   /*
     Build the instance matrix array once when observations
     change. Each matrix positions a small sphere at the
-    correct lat/lon on the globe surface.
+    correct lat/lon on the globe surface. Runs in an effect
+    so the mesh ref is attached before matrices are written.
   */
-  useMemo(() => {
+  useEffect(() => {
     if (!meshRef.current || count === 0) return;
 
     const dummy = new THREE.Object3D();
@@ -2953,19 +3861,94 @@ function App() {
   const [
     activeLayer,
     setActiveLayer,
-  ] = useState(
-    "Temperature"
-  );
+  ] = useState(null);
 
   const [
     depth,
     setDepth,
   ] = useState(0);
 
+  /*
+    HEADER DASHBOARD — thin slide-out navigation.
+    dashOpen controls the panel; dashSection holds the ONE
+    focused section (null = nav menu). Only the selected
+    section ever renders — no stacking, no extra overlays.
+  */
   const [
-    panelOpen,
-    setPanelOpen,
+    dashOpen,
+    setDashOpen,
   ] = useState(false);
+
+  const [
+    dashSection,
+    setDashSection,
+  ] = useState(null);
+
+  /*
+    APP BOOT OVERLAY — shows the RATNAKARA logo while the globe
+    scene mounts, then fades out once the canvas is alive and
+    the first imagery has started arriving. Hard fallback timer
+    guarantees the overlay can never stick.
+  */
+  const [bootReady, setBootReady] = useState(false);
+  const [bootGone, setBootGone] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let raf = 0;
+    const timers = [];
+    const start = Date.now();
+    let canvasAt = 0;
+
+    const finish = () => {
+      if (cancelled) return;
+      setBootReady(true);
+      timers.push(setTimeout(() => setBootGone(true), 750));
+    };
+
+    const poll = () => {
+      if (cancelled) return;
+
+      const canvas = document.querySelector(".app canvas");
+
+      if (canvas) {
+        if (!canvasAt) canvasAt = Date.now();
+
+        const tileArrived = performance
+          .getEntriesByType("resource")
+          .some(
+            (entry) =>
+              /eox\.at/.test(entry.name) &&
+              entry.responseEnd > 0
+          );
+
+        const minBeat = Date.now() - start > 900;
+        const globeSettled =
+          tileArrived || Date.now() - canvasAt > 3000;
+
+        if (minBeat && globeSettled) {
+          finish();
+          return;
+        }
+      }
+
+      raf = requestAnimationFrame(poll);
+    };
+
+    raf = requestAnimationFrame(poll);
+    timers.push(setTimeout(finish, 7000));
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
+    };
+  }, []);
+
+  const [
+    expandedLayer,
+    setExpandedLayer,
+  ] = useState(null);
 
   const [
     filterQuery,
@@ -2997,8 +3980,6 @@ function App() {
     setModelError,
   ] = useState(null);
 
-  const [dataStatus, setDataStatus] = useState({ health: null, metadata: null, argoError: null, validationError: null, alertError: null });
-
 
   /* ==========================================================
      PHASE 3 — ARGO OBSERVATIONS
@@ -3017,6 +3998,39 @@ function App() {
   const [
     currentVectors,
     setCurrentVectors,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     PHASE 7 — SALINITY LAYER DATA
+  ========================================================== */
+
+  const [
+    salinityPoints,
+    setSalinityPoints,
+  ] = useState([]);
+
+  const [
+    selectedSalinity,
+    setSelectedSalinity,
+  ] = useState(null);
+
+
+  /* ==========================================================
+     SEA SURFACE HEIGHT LAYER DATA
+
+     Same model-field API, new variable. Mirrors the Salinity
+     state block exactly.
+  ========================================================== */
+
+  const [
+    sshPoints,
+    setSshPoints,
+  ] = useState([]);
+
+  const [
+    selectedSsh,
+    setSelectedSsh,
   ] = useState(null);
 
 
@@ -3085,7 +4099,6 @@ function App() {
   ] = useState({
     current: true,
     temperature: true,
-    argo: true,
     warnings: true,
   });
 
@@ -3099,6 +4112,18 @@ function App() {
         })
       );
     };
+
+
+  /*
+    When the WARNINGS layer is switched OFF, no warning may
+    stay active invisibly — clear the pinpoint and card.
+  */
+
+  useEffect(() => {
+    if (!visibleLayers.warnings) {
+      setActiveWarning(null);
+    }
+  }, [visibleLayers.warnings]);
 
 
   /* ==========================================================
@@ -3177,6 +4202,31 @@ function App() {
     filterQuery
       .trim()
       .toLowerCase();
+
+
+  /*
+    Dashboard handlers. Selecting the open section again
+    closes the whole dashboard back to the clean globe.
+  */
+  const toggleDashboard = () => {
+    setDashOpen((open) => !open);
+    setDashSection(null);
+    setExpandedLayer(null);
+  };
+
+  const openDashSection = (name) => {
+    if (dashOpen && dashSection === name) {
+      setDashOpen(false);
+      setDashSection(null);
+      setExpandedLayer(null);
+
+      return;
+    }
+
+    setDashSection(name);
+    setDashOpen(true);
+    setExpandedLayer(null);
+  };
 
 
   const matchingHazards =
@@ -3296,6 +4346,37 @@ function App() {
 
   const handleLayerSelect =
     (layerName) => {
+      /*
+        SECOND CLICK ALWAYS STOPS:
+        Toggling a layer off must work even while the one-shot
+        data animation timer is still running — otherwise the
+        camera lock swallowed the click and the layer could
+        never be turned off with a single press.
+      */
+      if (
+        activeLayer ===
+        layerName
+      ) {
+        clearLayerAnimationTimer();
+
+        setCameraState("idle");
+
+        setActiveLayer(null);
+
+        setCoastalLinesOpen(false);
+
+        /* Closing a layer also closes its info overlay. */
+        if (layerName === "Salinity") {
+          setSelectedSalinity(null);
+        }
+
+        if (layerName === "Sea Surface Height") {
+          setSelectedSsh(null);
+        }
+
+        return;
+      }
+
       if (
         cameraState !==
         "idle"
@@ -3303,20 +4384,20 @@ function App() {
         return;
       }
 
-      if (
-        activeLayer ===
-        layerName
-      ) {
-        clearLayerAnimationTimer();
-
-        setActiveLayer(null);
-
-        return;
-      }
-
       setActiveLayer(
         layerName
       );
+
+      /*
+        SINGLE FOCUS RULE:
+        Selecting a layer from the Layers list swaps the
+        dashboard to that layer's focused view — the Layers
+        list does not stack underneath it.
+      */
+
+      setSelectedSalinity(null);
+
+      setSelectedSsh(null);
 
       setCameraState(
         "dataAnimating"
@@ -3429,6 +4510,33 @@ function App() {
 
       clearLayerAnimationTimer();
 
+      /*
+        Clicking the same coastal entry again stops the
+        coastal animation: clear the pinpoint/warning card
+        and fly back to the default view using the existing
+        camera animation.
+      */
+      if (
+        activeLocationKey ===
+        locationKey
+      ) {
+        setActiveWarning(null);
+
+        setSelectedLocation({
+          ...DEFAULT_CAMERA,
+        });
+
+        setActiveLocationKey(null);
+
+        setActiveLayer(null);
+
+        setCameraState(
+          "locationAnimating"
+        );
+
+        return;
+      }
+
       const advisory =
         findCoastalAdvisory(
           location
@@ -3525,21 +4633,17 @@ function App() {
   useEffect(() => {
     fetchHealth()
       .then((data) => {
-        setDataStatus((status) => ({ ...status, health: data }));
         console.log("[RATNAKARA] /health:", data);
       })
       .catch((err) => {
-        setDataStatus((status) => ({ ...status, health: { status: "unavailable" } }));
         console.error("[RATNAKARA] /health failed:", err);
       });
 
     fetchMetadata()
       .then((data) => {
-        setDataStatus((status) => ({ ...status, metadata: data }));
         console.log("[RATNAKARA] /api/v1/metadata:", data);
       })
       .catch((err) => {
-        setDataStatus((status) => ({ ...status, metadata: null }));
         console.error("[RATNAKARA] /api/v1/metadata failed:", err);
       });
   }, []);
@@ -3554,6 +4658,15 @@ function App() {
   ========================================================== */
 
   useEffect(() => {
+    if (activeLayer !== "Temperature") {
+      setModelPoints([]);
+      setModelLoading(false);
+      setModelError(null);
+      return;
+    }
+
+    let cancelled = false;
+
     setModelLoading(true);
     setModelError(null);
 
@@ -3564,23 +4677,37 @@ function App() {
       max_points: 5000,
     })
       .then((data) => {
-        setModelPoints(data.points);
-        // The API resolves requests to the nearest real NetCDF depth level.
-        // Keep the control and visualization aligned with that returned value.
-        setDepth((currentDepth) => currentDepth === data.depth ? currentDepth : data.depth);
+        if (cancelled) return;
+
+        setModelPoints(
+          Array.isArray(data.points)
+            ? data.points
+            : []
+        );
+
         console.log(
           `[RATNAKARA] model-field: ${data.points.length} points at depth ${data.depth}m`
         );
       })
       .catch((err) => {
-        setDataStatus((status) => ({ ...status, argoError: err.message || "unavailable" }));
+        if (cancelled) return;
+
         console.error("[RATNAKARA] model-field failed:", err);
-        setModelError(err.message || "Failed to load model data");
+        setModelPoints([]);
+        setModelError(
+          err.message || "Failed to load model data"
+        );
       })
       .finally(() => {
-        setModelLoading(false);
+        if (!cancelled) {
+          setModelLoading(false);
+        }
       });
-  }, [depth]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLayer, depth]);
 
 
   /* ==========================================================
@@ -3601,7 +4728,6 @@ function App() {
         );
       })
       .catch((err) => {
-        setDataStatus((status) => ({ ...status, validationError: err.message || "unavailable" }));
         console.error("[RATNAKARA] Argo observations failed:", err);
       });
   }, []);
@@ -3615,6 +4741,12 @@ function App() {
   ========================================================= */
 
   useEffect(() => {
+    /* Fetch U/V only while the Currents layer is active. */
+    if (activeLayer !== "Currents") {
+      setCurrentVectors([]);
+      return;
+    }
+
     const time = "2026-06-23T00:00:00";
 
     Promise.all([
@@ -3649,10 +4781,94 @@ function App() {
         );
       })
       .catch((err) => {
-        setDataStatus((status) => ({ ...status, alertError: err.message || "unavailable" }));
         console.error("[RATNAKARA] Current data failed:", err);
       });
-  }, [depth]);
+  }, [activeLayer, depth]);
+
+
+  /* ==========================================================
+     PHASE 7 — REAL SALINITY DATA
+
+     Fetches salinity from the existing model-field API only
+     while the Salinity layer is selected, at the current depth.
+  ========================================================== */
+
+  useEffect(() => {
+    if (activeLayer !== "Salinity") {
+      return;
+    }
+
+    let cancelled = false;
+
+    fetchModelField({
+      variable: "salinity",
+      depth: depth,
+      time: "2026-06-23T00:00:00",
+      max_points: 5000,
+    })
+      .then((data) => {
+        if (!cancelled) {
+          setSalinityPoints(data.points);
+          console.log(
+            `[RATNAKARA] Salinity: ${data.points.length} points at depth ${data.depth}m`
+          );
+        }
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] Salinity failed:", err);
+
+        if (!cancelled) {
+          setSalinityPoints([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLayer, depth]);
+
+
+  /* ==========================================================
+     SEA SURFACE HEIGHT DATA
+
+     Fetches the sea_surface_height variable from the same
+     model-field API only while the SSH layer is selected.
+     Surface variable: depth is reported as 0 m by the API.
+  ========================================================== */
+
+  useEffect(() => {
+    if (activeLayer !== "Sea Surface Height") {
+      return;
+    }
+
+    let cancelled = false;
+
+    fetchModelField({
+      variable: "sea_surface_height",
+      depth: 0,
+      time: "2026-06-23T00:00:00",
+      max_points: 5000,
+    })
+      .then((data) => {
+        if (!cancelled) {
+          setSshPoints(data.points);
+          console.log(
+            `[RATNAKARA] SSH: ${data.points.length} points`
+          );
+        }
+      })
+      .catch((err) => {
+        console.error("[RATNAKARA] SSH failed:", err);
+
+        if (!cancelled) {
+          setSshPoints([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLayer]);
 
 
   /* ==========================================================
@@ -3756,18 +4972,6 @@ function App() {
         : "rgba(4,20,35,0.72)",
   };
 
-  const temperatureRange = modelPoints.length
-    ? {
-        min: Math.min(...modelPoints.map((point) => point.value)),
-        max: Math.max(...modelPoints.map((point) => point.value)),
-      }
-    : null;
-  const currentSummary = currentVectors?.length
-    ? Math.max(...currentVectors.map((vector) => Math.hypot(vector.u, vector.v)))
-    : null;
-  const modelTimestamp = dataStatus.metadata?.datasets?.model?.notes
-    ?.find((note) => note.includes("timestamp")) || "2026-06-23T00:00:00";
-
 
   return (
     <div
@@ -3785,6 +4989,27 @@ function App() {
     >
 
       {/* ======================================================
+          APP BOOT OVERLAY — branded loading screen
+      ====================================================== */}
+
+      {!bootGone && (
+        <div
+          className={
+            bootReady
+              ? "app-boot-overlay app-boot-overlay--fade"
+              : "app-boot-overlay"
+          }
+          aria-hidden="true"
+        >
+          <div className="app-boot-logo">
+            <div className="app-boot-mark"></div>
+            <h1>RATNAKARA</h1>
+            <p>Ocean Intelligence Platform</p>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
           HEADER
       ====================================================== */}
 
@@ -3796,15 +5021,45 @@ function App() {
         }}
       >
 
-        <div className="brand">
+        {/*
+          LEFT EDGE: the hamburger owns the far left of the
+          header; the dashboard slides in from the page's
+          left edge underneath it.
+        */}
+        <div className="dash-header-group">
 
-          <h1>
-            RATNAKARA
-          </h1>
+          <button
+            type="button"
+            className={
+              dashOpen
+                ? "dash-toggle open"
+                : "dash-toggle"
+            }
+            onClick={toggleDashboard}
+            aria-label="Toggle dashboard"
+            title="Dashboard"
+          >
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
 
-          <p>
-            3D Ocean Intelligence &amp; Visualization Platform
-          </p>
+          <div
+            className="dash-logo"
+            aria-hidden="true"
+          ></div>
+
+          <div className="brand">
+
+            <h1>
+              RATNAKARA
+            </h1>
+
+            <p>
+              Ocean Intelligence Platform
+            </p>
+
+          </div>
 
         </div>
 
@@ -3903,12 +5158,6 @@ function App() {
 
         </nav>
 
-        <div className="data-status" aria-label="Data status">
-          <span className={dataStatus.health?.status === "ok" ? "status-dot ready" : "status-dot"}></span>
-          <span>MODEL + ARGO</span>
-          <small>{modelTimestamp.replace("T", " ").slice(0, 16)} UTC</small>
-        </div>
-
 
         <div
           className="theme-switch-wrap"
@@ -3991,105 +5240,155 @@ function App() {
       >
 
         {/* ====================================================
-            PANEL TOGGLE
+            HEADER DASHBOARD — thin slide-out navigation.
+
+            Opened from the header hamburger. ONE focused
+            section renders at a time; closing returns to
+            the clean globe. Replaces the old floating
+            LAYERS panel.
         ==================================================== */}
 
-        <button
+        <aside
           className={
-            panelOpen
-              ? "panel-toggle open"
-              : "panel-toggle"
+            dashOpen
+              ? "ocean-dash visible"
+              : "ocean-dash"
           }
 
-          onClick={() =>
-            setPanelOpen(
-              !panelOpen
-            )
-          }
-
-          aria-label="Toggle ocean layers"
-
-          style={{
-            position: "absolute",
-            zIndex: 15,
-
-            border:
-              lightMode
-                ? "1px solid rgba(22,135,201,0.55)"
-                : "1px solid rgba(35,154,255,0.90)",
-
-            boxShadow:
-              lightMode
-                ? "0 0 7px rgba(22,135,201,0.12)"
-                : "0 0 11px rgba(0,145,255,0.32)",
-          }}
+          aria-hidden={!dashOpen}
         >
 
-          <span></span>
-          <span></span>
-          <span></span>
+          <button
+            type="button"
+            className="dash-back"
 
-        </button>
-
-
-        {/* ====================================================
-            OCEAN PANEL
-        ==================================================== */}
-
-        <div
-          className={
-            panelOpen
-              ? "ocean-panel visible"
-              : "ocean-panel"
-          }
-
-          style={{
-            zIndex: 14,
-          }}
-        >
-
-          <div className="panel-header">
-
-            <div>
-
-              <span className="panel-dot"></span>
-
-              <span>
-                LAYERS
-              </span>
-
-            </div>
-
-          </div>
-
-
-          <div className="panel-search">
-
-            🔍
-
-            <input
-              type="search"
-              value={filterQuery}
-              placeholder="Filter layers..."
-              aria-label="Filter layers"
-
-              onChange={(event) =>
-                setFilterQuery(
-                  event.target.value
-                )
+            onClick={() => {
+              if (expandedLayer) {
+                setExpandedLayer(null);
               }
-            />
+              else if (dashSection) {
+                setDashSection(null);
+              }
 
-          </div>
+              else {
+                setDashOpen(false);
+              }
+            }}
+          >
+
+            <span className="dash-back-icon">
+              {(expandedLayer || dashSection) ? "←" : "✕"}
+            </span>
+
+            <span>
+              {(expandedLayer || dashSection) ? "BACK" : "CLOSE"}
+            </span>
+
+          </button>
 
 
-          <div className="panel-section-title">
-            OCEAN VARIABLES
-          </div>
+          {/* ----------------------------------------------
+              NAV MENU — only when no section AND no layer
+              is focused, so a selected layer's focused
+              view is ever the single visible content.
+          ---------------------------------------------- */}
+
+          {dashSection === null &&
+            !expandedLayer && (
+
+            <nav className="dash-nav">
+
+              <button
+                type="button"
+                className="dash-nav-btn"
+                onClick={() =>
+                  openDashSection("Ocean Layers")
+                }
+              >
+                <span className="dash-nav-icon">🗂</span>
+                <span>OCEAN LAYERS</span>
+              </button>
+
+              <button
+                type="button"
+                className="dash-nav-btn"
+                onClick={() =>
+                  openDashSection("Settings")
+                }
+              >
+                <span className="dash-nav-icon">⚙️</span>
+                <span>SETTINGS</span>
+              </button>
+
+              <button
+                type="button"
+                className="dash-nav-btn"
+                onClick={() =>
+                  openDashSection("Report Analysis")
+                }
+              >
+                <span className="dash-nav-icon">📊</span>
+                <span>REPORT ANALYSIS</span>
+              </button>
+
+              <button
+                type="button"
+                className="dash-nav-btn"
+                onClick={() =>
+                  openDashSection("AI Ocean Assistant")
+                }
+              >
+                <span className="dash-nav-icon">🌊</span>
+                <span>AI OCEAN ASSISTANT</span>
+              </button>
+
+              <div className="dash-nav-spacer"></div>
+
+              <button
+                type="button"
+                className="dash-nav-btn dash-nav-small"
+                onClick={() =>
+                  openDashSection("Profile")
+                }
+              >
+                <span className="dash-nav-icon">👤</span>
+                <span>PROFILE</span>
+              </button>
+
+              <button
+                type="button"
+                className="dash-nav-btn dash-nav-small"
+                onClick={() =>
+                  openDashSection("Logout")
+                }
+              >
+                <span className="dash-nav-icon">⎋</span>
+                <span>LOGOUT</span>
+              </button>
+
+            </nav>
+          )}
+
+
+          {/* ----------------------------------------------
+              LAYERS — only this section renders when
+              Layers is selected. Existing layer buttons
+              and filter are unchanged.
+          ---------------------------------------------- */}
+
+          {dashSection === "Ocean Layers" && (
+            <div
+              className="dash-content"
+              key="OceanLayers"
+            >
+
+              <div className="dash-content-title">
+                OCEAN LAYERS
+              </div>
 
 
           {/* ==================================================
-              TEMPERATURE
+              TEMPERATURE — expandable dropdown
           ================================================== */}
 
           <button
@@ -4100,11 +5399,20 @@ function App() {
                 : "layer-button"
             }
 
-            onClick={() =>
-              handleLayerSelect(
-                "Temperature"
-              )
-            }
+            onClick={() => {
+              /*
+                Toggle the dropdown AND activate the layer.
+                Second click collapses dropdown; layer stays active.
+              */
+              setExpandedLayer(
+                expandedLayer === "Temperature"
+                  ? null
+                  : "Temperature"
+              );
+              if (activeLayer !== "Temperature") {
+                handleLayerSelect("Temperature");
+              }
+            }}
           >
 
             <span className="layer-icon">
@@ -4123,11 +5431,61 @@ function App() {
 
             </span>
 
+            <span
+              style={{
+                marginLeft: "auto",
+                fontSize: 10,
+                opacity: 0.65,
+                transition: "transform 0.2s ease",
+                transform:
+                  expandedLayer === "Temperature"
+                    ? "rotate(180deg)"
+                    : "rotate(0deg)",
+              }}
+            >
+              ▾
+            </span>
+
           </button>
+
+          {/* Temperature expanded: depth slider */}
+          {expandedLayer === "Temperature" && (
+            <div className="dash-content dash-layer-expand" key="TempDepth" style={{ paddingLeft: 12, marginBottom: 6 }}>
+              <div className="depth-values">
+                <span>Depth</span>
+                <strong>{depth} m</strong>
+              </div>
+              <input
+                className="depth-slider"
+                type="range"
+                min="0"
+                max="2000"
+                step="50"
+                value={depth}
+                onChange={(e) => setDepth(Number(e.target.value))}
+              />
+              <div className="depth-labels">
+                <span>0 m</span>
+                <span>2000 m</span>
+              </div>
+              <div className="depth-values" style={{ marginTop: 4 }}>
+                <span>Status</span>
+                <strong style={{ fontSize: 10 }}>
+                  {modelLoading
+                    ? "Loading…"
+                    : modelError
+                      ? "Fallback"
+                      : modelPoints.length > 0
+                        ? `${modelPoints.length} pts`
+                        : "Fallback"}
+                </strong>
+              </div>
+            </div>
+          )}
 
 
           {/* ==================================================
-              SALINITY
+              SALINITY — expandable dropdown
           ================================================== */}
 
           <button
@@ -4138,11 +5496,16 @@ function App() {
                 : "layer-button"
             }
 
-            onClick={() =>
-              handleLayerSelect(
-                "Salinity"
-              )
-            }
+            onClick={() => {
+              setExpandedLayer(
+                expandedLayer === "Salinity"
+                  ? null
+                  : "Salinity"
+              );
+              if (activeLayer !== "Salinity") {
+                handleLayerSelect("Salinity");
+              }
+            }}
           >
 
             <span className="layer-icon">
@@ -4161,7 +5524,45 @@ function App() {
 
             </span>
 
+            <span
+              style={{
+                marginLeft: "auto",
+                fontSize: 10,
+                opacity: 0.65,
+                transition: "transform 0.2s ease",
+                transform:
+                  expandedLayer === "Salinity"
+                    ? "rotate(180deg)"
+                    : "rotate(0deg)",
+              }}
+            >
+              ▾
+            </span>
+
           </button>
+
+          {/* Salinity expanded: depth slider */}
+          {expandedLayer === "Salinity" && (
+            <div className="dash-content dash-layer-expand" key="SalDepth" style={{ paddingLeft: 12, marginBottom: 6 }}>
+              <div className="depth-values">
+                <span>Depth</span>
+                <strong>{depth} m</strong>
+              </div>
+              <input
+                className="depth-slider"
+                type="range"
+                min="0"
+                max="2000"
+                step="50"
+                value={depth}
+                onChange={(e) => setDepth(Number(e.target.value))}
+              />
+              <div className="depth-labels">
+                <span>0 m</span>
+                <span>2000 m</span>
+              </div>
+            </div>
+          )}
 
 
           {/* ==================================================
@@ -4200,12 +5601,59 @@ function App() {
           </button>
 
 
+          {/* ==================================================
+              SEA SURFACE HEIGHT
+
+              New GLORYS variable from the existing model-field
+              API. Same marker-layer architecture as Salinity.
+          ================================================== */}
+
           <button
-            className={visibleLayers.argo ? "layer-button selected" : "layer-button"}
-            onClick={() => handleToggleLayer("argo")}
+            className={
+              activeLayer ===
+              "Sea Surface Height"
+                ? "layer-button selected"
+                : "layer-button"
+            }
+
+            onClick={() => {
+              if (
+                activeLayer ===
+                "Sea Surface Height"
+              ) {
+                clearLayerAnimationTimer();
+
+                setCameraState("idle");
+
+                setActiveLayer(null);
+
+                setSelectedSsh(null);
+
+                return;
+              }
+
+              handleLayerSelect(
+                "Sea Surface Height"
+              );
+            }}
           >
-            <span className="layer-icon">●</span>
-            <span><strong>Argo Observations</strong><small>{argoObservations.length ? `${argoObservations.length} real observation points` : "Data unavailable"}</small></span>
+
+            <span className="layer-icon">
+              📏
+            </span>
+
+            <span>
+
+              <strong>
+                Sea Surface Height
+              </strong>
+
+              <small>
+                GLORYS zos — ocean topography
+              </small>
+
+            </span>
+
           </button>
 
 
@@ -4425,6 +5873,36 @@ function App() {
 
 
           {/* ==================================================
+              FILTER ENGINE
+          ================================================== */}
+
+          <div className="panel-divider"></div>
+
+          <div className="panel-section-title">
+            FILTER ENGINE
+          </div>
+
+          <div className="panel-search">
+
+            🔍
+
+            <input
+              type="search"
+              value={filterQuery}
+              placeholder="Filter layers..."
+              aria-label="Filter layers"
+
+              onChange={(event) =>
+                setFilterQuery(
+                  event.target.value
+                )
+              }
+            />
+
+          </div>
+
+
+          {/* ==================================================
               HAZARDS
           ================================================== */}
 
@@ -4488,7 +5966,201 @@ function App() {
             </>
           )}
 
-        </div>
+
+            </div>
+          )}
+
+
+          {/* ----------------------------------------------
+              SETTINGS — focused section (theme toggle)
+          ---------------------------------------------- */}
+
+          {dashSection === "Settings" && (
+            <div
+              className="dash-content"
+              key="Settings"
+            >
+
+              <div className="dash-content-title">
+                SETTINGS
+              </div>
+
+              <button
+                type="button"
+                className="dash-setting-row"
+                onClick={() =>
+                  setLightMode(
+                    (value) => !value
+                  )
+                }
+              >
+
+                <span>
+                  Light mode
+                </span>
+
+                <span
+                  className={
+                    lightMode
+                      ? "theme-switch light"
+                      : "theme-switch"
+                  }
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    minWidth: "22px",
+                    minHeight: "22px",
+                    padding: 0,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <span
+                    className={
+                      lightMode
+                        ? "theme-switch-dot light-dot"
+                        : "theme-switch-dot dark-dot"
+                    }
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      display: "block",
+                    }}
+                  />
+                </span>
+
+              </button>
+
+            </div>
+          )}
+
+
+          {/* ----------------------------------------------
+              REPORT ANALYSIS — focused placeholder
+          ---------------------------------------------- */}
+
+          {dashSection === "Report Analysis" && (
+            <div
+              className="dash-content"
+              key="Report"
+            >
+
+              <div className="dash-content-title">
+                REPORT ANALYSIS
+              </div>
+
+              <div className="dash-content-note">
+                Batch model-vs-Argo validation reports will
+                open here.
+              </div>
+
+            </div>
+          )}
+
+
+          {/* ----------------------------------------------
+              AI OCEAN ASSISTANT — focused placeholder
+          ---------------------------------------------- */}
+
+          {dashSection === "AI Ocean Assistant" && (
+            <div
+              className="dash-content"
+              key="AI"
+            >
+
+              <div className="dash-content-title">
+                AI OCEAN ASSISTANT
+              </div>
+
+              <div className="dash-content-note">
+                Conversational ocean queries — use the wave
+                button bottom-right.
+              </div>
+
+            </div>
+          )}
+
+
+          {/* ----------------------------------------------
+              PROFILE — focused section, bottom-anchored
+          ---------------------------------------------- */}
+
+          {dashSection === "Profile" && (
+            <div
+              className="dash-content"
+              key="Profile"
+            >
+
+              <div className="dash-content-title">
+                PROFILE
+              </div>
+
+              {/*
+                ======================================================
+                REGISTRATION UI SLOT — PLACEHOLDER
+                ======================================================
+                Reserved area for the future registration / login UI.
+                Replace the div below with your registration component
+                when the code is ready, e.g.:
+
+                  import RegisterForm from "./components/RegisterForm";
+                  ...
+                  <RegisterForm />
+
+                Nothing else in this dashboard needs to change — this
+                section already renders when PROFILE is selected.
+                ======================================================
+              */}
+              <div
+                className="register-slot"
+                id="register-slot"
+              >
+                <div className="register-slot-icon">👤</div>
+
+                <div className="register-slot-title">
+                  Registration coming soon
+                </div>
+
+                <div className="register-slot-note">
+                  Account creation and sign-in will live here. This
+                  panel is reserved for the registration UI.
+                </div>
+
+                {/*
+                  FUTURE: mount your registration form here, e.g.
+                  <RegisterForm onRegister={...} />
+                */}
+              </div>
+
+            </div>
+          )}
+
+
+          {/* ----------------------------------------------
+              LOGOUT — focused action state
+          ---------------------------------------------- */}
+
+          {dashSection === "Logout" && (
+            <div
+              className="dash-content"
+              key="Logout"
+            >
+
+              <div className="dash-content-title">
+                LOGOUT
+              </div>
+
+              <div className="dash-content-note">
+                You have been signed out.
+              </div>
+
+            </div>
+          )}
+
+        </aside>
 
 
         {/* ====================================================
@@ -4568,15 +6240,7 @@ function App() {
 
 
             {!lightMode && (
-              <Stars
-                radius={90}
-                depth={55}
-                count={2200}
-                factor={1.6}
-                saturation={0}
-                fade
-                speed={0.08}
-              />
+              <HorizonStars />
             )}
 
 
@@ -4677,7 +6341,7 @@ function App() {
 
               <ArgoMarkers
                 observations={
-                  visibleLayers.argo ? argoObservations : []
+                  argoObservations
                 }
               />
 
@@ -4687,8 +6351,64 @@ function App() {
                 visibleLayers.temperature && (
                   <TemperatureLayer
                     depth={depth}
-                    radius={2.034}
+                    radius={TEMPERATURE_OVERLAY_RADIUS}
                     modelPoints={modelPoints}
+                    argoObservations={argoObservations}
+                  />
+                )}
+
+
+              {activeLayer ===
+                "Salinity" && (
+                  <SalinityLayer
+                    points={salinityPoints}
+                    depth={depth}
+                    onSelect={setSelectedSalinity}
+                  />
+                )}
+
+
+              {/* Info box pinned to the clicked marker. */}
+              {activeLayer ===
+                "Salinity" &&
+                selectedSalinity && (
+                  <AnchoredSalinityInfo
+                    point={selectedSalinity}
+                    onClose={() =>
+                      setSelectedSalinity(null)
+                    }
+                    lightMode={
+                      lightMode
+                    }
+                  />
+                )}
+
+
+              {activeLayer ===
+                "Sea Surface Height" && (
+                  <SeaSurfaceHeightLayer
+                    points={sshPoints}
+                    depth={0}
+                    onSelect={setSelectedSsh}
+                  />
+                )}
+
+
+              {/* SSH info box pinned to the clicked marker. */}
+              {activeLayer ===
+                "Sea Surface Height" &&
+                selectedSsh && (
+                  <AnchoredSalinityInfo
+                    point={selectedSsh}
+                    onClose={() =>
+                      setSelectedSsh(null)
+                    }
+                    lightMode={
+                      lightMode
+                    }
+                    title="SEA SURFACE HEIGHT"
+                    unitLabel="m"
+                    sourceLabel="GLORYS zos"
                   />
                 )}
 
@@ -4703,7 +6423,6 @@ function App() {
                     <CurrentsErrorBoundary>
 
                       <RatnakaraCurrents
-                        depth={depth}
                         currentVectors={currentVectors}
                       />
 
@@ -4758,26 +6477,6 @@ function App() {
             HTML OVERLAY COMPONENTS
         ==================================================== */}
 
-        <aside className="ocean-inspector" aria-label="Ocean controls and provenance">
-          <div className="inspector-kicker">OCEAN CONTROLS</div>
-          <div className="inspector-row"><span>Variable</span><strong>{activeLayer || "None"}</strong></div>
-          {activeLayer === "Temperature" && <>
-            <div className="inspector-row"><span>Dataset depth</span><strong>{depth} m</strong></div>
-            <input className="inspector-slider" type="range" min="0" max="2000" step="50" value={depth} onChange={(event) => setDepth(Number(event.target.value))} aria-label="Temperature depth in metres" />
-          </>}
-          <div className="inspector-row"><span>Model field</span><strong>{modelLoading ? "Loading…" : modelError ? "Unavailable" : `${modelPoints.length} cells`}</strong></div>
-          {temperatureRange && <div className="inspector-row"><span>Temperature</span><strong>{temperatureRange.min.toFixed(1)}–{temperatureRange.max.toFixed(1)} °C</strong></div>}
-          <div className="inspector-divider" />
-          <div className="inspector-kicker">CURRENT VECTOR FIELD</div>
-          <div className="inspector-row"><span>U/V flow</span><strong>{currentVectors?.length ? `${currentVectors.length} vectors` : "Unavailable"}</strong></div>
-          {currentSummary !== null && <div className="inspector-row"><span>Max speed</span><strong>{currentSummary.toFixed(2)} m/s</strong></div>}
-          <div className="inspector-divider" />
-          <div className="inspector-kicker">PROVENANCE</div>
-          <p className="inspector-note">Model: {dataStatus.metadata?.datasets?.model?.source || "Data unavailable"}</p>
-          <p className="inspector-note">Observations: {dataStatus.metadata?.datasets?.argo?.source || dataStatus.argoError || "Loading…"}</p>
-          <p className="inspector-note">Markers: cyan = Argo observation; colour field = model forecast.</p>
-        </aside>
-
         <LocationLabel
           name={
             activeWarning?.name
@@ -4818,6 +6517,11 @@ function App() {
             lightMode
           }
         />
+
+
+        {/* SALINITY POINT INFO — now anchored to the clicked
+            marker inside the Canvas (see AnchoredSalinityInfo);
+            the old bottom-right floating overlay is removed. */}
 
 
         <DataLayerFilter
@@ -4869,7 +6573,7 @@ function App() {
         {validationMetrics && (
           <div
             style={{
-              position: "absolute",
+              position: "fixed",
               bottom: 16,
               left: 16,
               background: lightMode
@@ -4902,7 +6606,7 @@ function App() {
                 marginBottom: 4,
               }}
             >
-              FORECAST TRUTH
+              MODEL vs ARGO
             </div>
 
             <div>
@@ -4919,7 +6623,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.bias.toFixed(2)}
+                {validationMetrics.bias}
                 {" °C"}
               </span>
             </div>
@@ -4938,7 +6642,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.mae.toFixed(2)}
+                {validationMetrics.mae}
                 {" °C"}
               </span>
             </div>
@@ -4957,7 +6661,7 @@ function App() {
               <span
                 style={{ fontWeight: 600 }}
               >
-                {validationMetrics.rmse.toFixed(2)}
+                {validationMetrics.rmse}
                 {" °C"}
               </span>
             </div>
@@ -4971,7 +6675,8 @@ function App() {
                   : "#94a3b8",
               }}
             >
-              Matched observations: {validationMetrics.pair_count}
+              {validationMetrics.pair_count}
+              {" pairs"}
             </div>
 
             {validationCollocation && (
@@ -5006,7 +6711,7 @@ function App() {
         {alertData && (
           <div
             style={{
-              position: "absolute",
+              position: "fixed",
               bottom: 16,
               left: 210,
               background: lightMode
@@ -5084,12 +6789,6 @@ function App() {
               </div>
             )}
 
-            {alertData.alerts[0] && (
-              <div style={{ marginTop: 5, fontSize: 9, color: lightMode ? "#8fadb8" : "#94a3b8" }}>
-                Matched observations: {alertData.alerts[0].pair_count}
-              </div>
-            )}
-
             <div
               style={{
                 marginTop: 4,
@@ -5118,7 +6817,7 @@ function App() {
             style={{
               position: "absolute",
               bottom: 16,
-              right: 16,
+              right: activeWarning ? 348 : 16,
               width: 40,
               height: 40,
               borderRadius: "50%",
@@ -5154,7 +6853,7 @@ function App() {
             style={{
               position: "absolute",
               bottom: 16,
-              right: 16,
+              right: activeWarning ? 348 : 16,
               width: 320,
               maxHeight: 400,
               background: lightMode

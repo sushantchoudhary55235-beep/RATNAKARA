@@ -7,6 +7,83 @@
     <title>frontend</title>
   </head>
   <body>
+    <!--
+      STATIC BOOT SPLASH — paints instantly from the first byte
+      (inline CSS, zero external requests), so slow connections
+      see the RATNAKARA brand instead of a blank page while the
+      React module graph loads. Removed by main.jsx on mount.
+    -->
+    <div id="boot-splash">
+      <div class="boot-mark"></div>
+      <div class="boot-title">RATNAKARA</div>
+      <div class="boot-sub">Ocean Intelligence Platform</div>
+    </div>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+
+        background: #04121f;
+        font-family: Inter, "Segoe UI", Arial, sans-serif;
+
+        opacity: 1;
+        transition: opacity 0.5s ease;
+      }
+
+      #boot-splash.boot-hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .boot-mark {
+        width: 46px;
+        height: 46px;
+        margin-bottom: 26px;
+        border-radius: 50%;
+
+        border: 2px solid rgba(32, 180, 134, 0.18);
+        border-top-color: #20b486;
+        border-right-color: #078b8c;
+
+        animation: boot-spin 1.05s linear infinite;
+      }
+
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .boot-title {
+        font-size: 34px;
+        font-weight: 750;
+        letter-spacing: 6px;
+
+        background:
+          linear-gradient(
+            90deg,
+            #064e6b,
+            #078b8c,
+            #20b486
+          );
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .boot-sub {
+        margin-top: 10px;
+        font-size: 12px;
+        letter-spacing: 0.3px;
+        color: #087e8b;
+      }
+    </style>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

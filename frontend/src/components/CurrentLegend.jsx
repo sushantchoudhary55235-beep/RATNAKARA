@@ -35,7 +35,7 @@ export default function CurrentLegend({ visible = true, lightMode = false }) {
   return (
     <div
       style={{
-        position: "absolute",
+        position: "fixed",
         bottom: 24,
         left: 24,
         padding: "10px 14px",

@@ -34,9 +34,10 @@ export default function TemperatureLegend({ visible = true, lightMode = false })
   return (
     <div
       style={{
-        position: "absolute",
+        position: "fixed",
         bottom: 24,
         left: 24,
+        right: "auto",
         padding: "10px 14px",
         background: bg,
         backdropFilter: "blur(10px)",
@@ -44,7 +45,7 @@ export default function TemperatureLegend({ visible = true, lightMode = false })
         border: `1px solid ${borderColor}`,
         borderRadius: 10,
         boxShadow: "0 4px 14px rgba(0,0,0,0.16)",
-        zIndex: 25,
+        zIndex: 70,
         fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
         minWidth: 200,
       }}
@@ -61,7 +62,6 @@ export default function TemperatureLegend({ visible = true, lightMode = false })
         TEMPERATURE
       </div>
 
-      {/* Color bar */}
       <div
         style={{
           width: "100%",
@@ -74,7 +74,6 @@ export default function TemperatureLegend({ visible = true, lightMode = false })
         }}
       />
 
-      {/* Labels */}
       <div
         style={{
           display: "flex",
