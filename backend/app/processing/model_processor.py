@@ -22,6 +22,8 @@ VARIABLE_MAP: dict[str, str] = {
     "salinity": "so",
     "u_current": "uo",
     "v_current": "vo",
+    # Surface variable: the frontend SSH layer requests this name.
+    "sea_surface_height": "zos",
 }
 
 # Fallback display units, used when the dataset has no usable metadata.
@@ -30,6 +32,7 @@ DEFAULT_UNITS: dict[str, str] = {
     "salinity": "PSU",
     "u_current": "m/s",
     "v_current": "m/s",
+    "sea_surface_height": "m",
 }
 
 # NetCDF `units` attribute -> display unit.
@@ -200,12 +203,16 @@ def process_model_field(
         raise InvalidBoundsError(f"Invalid time '{time}': {exc}") from exc
     selected_time = field.time.values
 
-    # --- Nearest depth ---
-    try:
-        field = field.sel(depth=depth, method="nearest")
-    except (KeyError, ValueError) as exc:
-        raise InvalidDepthError(f"Invalid depth '{depth}': {exc}") from exc
-    selected_depth = float(field.depth.values)
+    # --- Nearest depth (surface variables like zos have no depth axis) ---
+    if "depth" in field.dims or "depth" in field.coords:
+        try:
+            field = field.sel(depth=depth, method="nearest")
+        except (KeyError, ValueError) as exc:
+            raise InvalidDepthError(f"Invalid depth '{depth}': {exc}") from exc
+        selected_depth = float(field.depth.values)
+    else:
+        # Depth-less (surface) variable: the request depth is reported as 0 m.
+        selected_depth = 0.0
 
     # --- Optional geographic bounds (each pair independent; defaults to dataset range) ---
     if lat_min is None:

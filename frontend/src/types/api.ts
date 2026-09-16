@@ -238,6 +238,7 @@ export interface AlertResponse {
 
 // --- Chat (OceanAI) ---
 export interface ChatContext {
+  region?: string
   latitude?: number
   longitude?: number
   depth?: number

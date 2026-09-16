@@ -6,6 +6,11 @@ from pydantic import BaseModel, Field, field_validator
 class ChatContext(BaseModel):
     """Optional RATNAKAR data context for data-aware chat responses."""
 
+    region: Optional[str] = Field(
+        None,
+        max_length=80,
+        description="Selected application region (e.g., 'Arabian Sea')",
+    )
     latitude: Optional[float] = Field(
         None,
         ge=-90.0,

@@ -27,6 +27,7 @@ def chat(request: ChatRequest):
         context_dict = None
         if request.context:
             context_dict = {
+                "region": request.context.region,
                 "latitude": request.context.latitude,
                 "longitude": request.context.longitude,
                 "depth": request.context.depth,

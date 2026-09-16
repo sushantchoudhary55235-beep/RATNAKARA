@@ -52,16 +52,22 @@ const LOCATIONS = {
   ARABIAN_SEA: {
     lat: 15,
     lon: 75,
+    name: "Arabian Sea",
+    bounds: { minLat: 5, maxLat: 25, minLon: 50, maxLon: 75 },
   },
 
   BAY_OF_BENGAL: {
     lat: 15,
     lon: 90,
+    name: "Bay of Bengal",
+    bounds: { minLat: 5, maxLat: 25, minLon: 75, maxLon: 100 },
   },
 
   INDIAN_OCEAN: {
     lat: -10,
     lon: 95,
+    name: "Indian Ocean",
+    bounds: { minLat: -25, maxLat: 5, minLon: 50, maxLon: 110 },
   },
 };
 
@@ -4655,7 +4661,21 @@ function App() {
      Fetches real model-field data from the backend whenever
      the user changes depth. The single available timestep
      is 2026-06-23T00:00:00 (from the metadata).
+
+     When a region is selected (Arabian Sea / Bay of Bengal /
+     Indian Ocean buttons) its application bounds are sent to
+     the backend so only that region's data is displayed.
   ========================================================== */
+
+  /*
+    Active application region (from the region navigation
+    buttons) — used to scope data fetches and chat context.
+    null when no region is selected: the whole dataset is shown.
+  */
+  const activeRegion =
+    activeLocationKey && LOCATIONS[activeLocationKey]
+      ? LOCATIONS[activeLocationKey]
+      : null;
 
   useEffect(() => {
     if (activeLayer !== "Temperature") {
@@ -4675,6 +4695,14 @@ function App() {
       depth: depth,
       time: "2026-06-23T00:00:00",
       max_points: 5000,
+      ...(activeRegion
+        ? {
+            lat_min: activeRegion.bounds.minLat,
+            lat_max: activeRegion.bounds.maxLat,
+            lon_min: activeRegion.bounds.minLon,
+            lon_max: activeRegion.bounds.maxLon,
+          }
+        : {}),
     })
       .then((data) => {
         if (cancelled) return;
@@ -4707,7 +4735,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeLayer, depth]);
+  }, [activeLayer, depth, activeRegion]);
 
 
   /* ==========================================================
@@ -4750,8 +4778,34 @@ function App() {
     const time = "2026-06-23T00:00:00";
 
     Promise.all([
-      fetchModelField({ variable: "u_current", depth, time, max_points: 500 }),
-      fetchModelField({ variable: "v_current", depth, time, max_points: 500 }),
+      fetchModelField({
+        variable: "u_current",
+        depth,
+        time,
+        max_points: 500,
+        ...(activeRegion
+          ? {
+              lat_min: activeRegion.bounds.minLat,
+              lat_max: activeRegion.bounds.maxLat,
+              lon_min: activeRegion.bounds.minLon,
+              lon_max: activeRegion.bounds.maxLon,
+            }
+          : {}),
+      }),
+      fetchModelField({
+        variable: "v_current",
+        depth,
+        time,
+        max_points: 500,
+        ...(activeRegion
+          ? {
+              lat_min: activeRegion.bounds.minLat,
+              lat_max: activeRegion.bounds.maxLat,
+              lon_min: activeRegion.bounds.minLon,
+              lon_max: activeRegion.bounds.maxLon,
+            }
+          : {}),
+      }),
     ])
       .then(([uData, vData]) => {
         /* Merge U and V by nearest lat/lon key */
@@ -4771,6 +4825,10 @@ function App() {
               longitude: vPt.longitude,
               u: uVal,
               v: vPt.value,
+              /* speed = |uv|, direction = atan2(v, u) — derived from the
+                 real model components, not synthesized. */
+              speed: Math.sqrt(uVal * uVal + vPt.value * vPt.value),
+              direction: Math.atan2(vPt.value, uVal),
             });
           }
         }
@@ -4782,8 +4840,9 @@ function App() {
       })
       .catch((err) => {
         console.error("[RATNAKARA] Current data failed:", err);
+        setCurrentVectors([]);
       });
-  }, [activeLayer, depth]);
+  }, [activeLayer, depth, activeRegion]);
 
 
   /* ==========================================================
@@ -4805,6 +4864,14 @@ function App() {
       depth: depth,
       time: "2026-06-23T00:00:00",
       max_points: 5000,
+      ...(activeRegion
+        ? {
+            lat_min: activeRegion.bounds.minLat,
+            lat_max: activeRegion.bounds.maxLat,
+            lon_min: activeRegion.bounds.minLon,
+            lon_max: activeRegion.bounds.maxLon,
+          }
+        : {}),
     })
       .then((data) => {
         if (!cancelled) {
@@ -4825,7 +4892,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeLayer, depth]);
+  }, [activeLayer, depth, activeRegion]);
 
 
   /* ==========================================================
@@ -4848,6 +4915,14 @@ function App() {
       depth: 0,
       time: "2026-06-23T00:00:00",
       max_points: 5000,
+      ...(activeRegion
+        ? {
+            lat_min: activeRegion.bounds.minLat,
+            lat_max: activeRegion.bounds.maxLat,
+            lon_min: activeRegion.bounds.minLon,
+            lon_max: activeRegion.bounds.maxLon,
+          }
+        : {}),
     })
       .then((data) => {
         if (!cancelled) {
@@ -4868,7 +4943,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeLayer]);
+  }, [activeLayer, activeRegion]);
 
 
   /* ==========================================================
@@ -4927,13 +5002,26 @@ function App() {
     setChatError(null);
 
     try {
+      /*
+        Context for data-grounded answers: the selected region and
+        parameter let the backend retrieve REAL model/observation values
+        (datasets remain the source of truth — Gemini only interprets).
+      */
+      const layerVariableMap = {
+        Temperature: "temperature",
+        Salinity: "salinity",
+        Currents: "u_current",
+        "Sea Surface Height": "sea_surface_height",
+      };
+
       const response = await fetchChat({
         question,
         context: {
+          region: activeRegion?.name,
           latitude: selectedLocation?.lat,
           longitude: selectedLocation?.lon,
           depth,
-          variable: activeLayer?.toLowerCase(),
+          variable: layerVariableMap[activeLayer],
         },
       });
       setChatAnswer(response.answer);

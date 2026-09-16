@@ -21,6 +21,7 @@ def test_metadata_model_dataset(client: TestClient) -> None:
         "salinity": "so",
         "u_current": "uo",
         "v_current": "vo",
+        "sea_surface_height": "zos",
     }
     assert model["spatial_coverage"]["latitude_min"] == -30.0
     assert model["time_steps"] == 1

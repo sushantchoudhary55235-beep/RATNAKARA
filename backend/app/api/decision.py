@@ -18,7 +18,7 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=DecisionResponse)
+@router.get("/decision", response_model=DecisionResponse)
 def decision():
     """Deterministic ocean decision-support endpoint.
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
+import numpy as np
+
 from app.schemas.decision import (
     DecisionResponse,
     DecisionResult,
@@ -50,8 +52,24 @@ TEMPERATURE_THRESHOLDS = {
     # RED = below yellow_min or above yellow_max
 }
 
-# Model timestep (known from dataset inspection)
+# Model timestep fallback (known from dataset inspection). The live value
+# is read from the model dataset when available (see _model_timestamp).
 MODEL_TIMESTAMP = "2026-06-23T00:00:00"
+
+
+def _model_timestamp() -> str:
+    """Latest timestep of the local model dataset (fallback: known constant).
+
+    Keeps the freshness metric and downstream model lookups dataset-driven
+    instead of pinned to a hardcoded date that goes stale.
+    """
+    try:
+        from app.processing.model_processor import load_dataset
+
+        ds = load_dataset()
+        return str(np.datetime64(ds.time.values.max(), "s"))
+    except Exception:
+        return MODEL_TIMESTAMP
 
 NOTES = [
     "Deterministic Ocean Decision-Support Layer.",
@@ -67,6 +85,16 @@ NOTES = [
 def get_decision() -> DecisionResponse:
     """Compute composite ocean decision from multiple real data sources."""
     now = datetime.now(timezone.utc)
+
+    model_timestamp = _model_timestamp()
+    try:
+        # Dataset timestamps are naive UTC; make it aware so the
+        # subtraction against `now` (UTC) does not raise TypeError.
+        model_dt = datetime.fromisoformat(model_timestamp.replace("Z", "+00:00")).replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        model_dt = None
 
     # --- 1. Validation confidence (from existing alert engine) ---
     try:
@@ -85,7 +113,8 @@ def get_decision() -> DecisionResponse:
 
     # --- 2. Data freshness ---
     try:
-        model_dt = datetime.fromisoformat(MODEL_TIMESTAMP.replace("Z", "+00:00"))
+        if model_dt is None:
+            raise ValueError("Invalid model timestamp")
         freshness_days = (now - model_dt).days
         freshness_status = _evaluate_freshness(freshness_days)
     except Exception:
@@ -94,10 +123,10 @@ def get_decision() -> DecisionResponse:
 
     # --- 3. Current speed ---
     # We compute this from actual model U/V data
-    max_current_speed, current_status = _evaluate_current_speed()
+    max_current_speed, current_status = _evaluate_current_speed(model_dt)
 
     # --- 4. Surface temperature ---
-    avg_surface_temp, temp_status = _evaluate_temperature()
+    avg_surface_temp, temp_status = _evaluate_temperature(model_dt)
 
     # --- Build supporting metrics ---
     supporting = [
@@ -147,7 +176,7 @@ def get_decision() -> DecisionResponse:
         summary=summary,
         reason=reason,
         supporting_metrics=supporting,
-        model_time=MODEL_TIMESTAMP,
+        model_time=model_timestamp,
         data_sources=[
             "Copernicus Marine Model (arabian_sea_model.nc)",
             "INCOIS Argo Observations (arabian_sea_argo.nc)",
@@ -176,16 +205,19 @@ def _evaluate_freshness(days: int) -> str:
     return "RED"
 
 
-def _evaluate_current_speed() -> tuple[float, str]:
+def _evaluate_current_speed(time: datetime | None) -> tuple[float, str]:
     """Fetch actual max current speed from the model and evaluate."""
     try:
-        from app.services.model_field_service import get_model_field
+        if time is None:
+            raise ValueError("Model timestamp unavailable")
+
+        from app.services.model_service import get_model_field
 
         u_data = get_model_field(
-            variable="u_current", depth=0, time=MODEL_TIMESTAMP, max_points=500
+            variable="u_current", depth=0, time=time, max_points=500
         )
         v_data = get_model_field(
-            variable="v_current", depth=0, time=MODEL_TIMESTAMP, max_points=500
+            variable="v_current", depth=0, time=time, max_points=500
         )
 
         # Build lookup for U values by lat/lon key
@@ -215,13 +247,16 @@ def _evaluate_current_speed() -> tuple[float, str]:
         return -1.0, "YELLOW"
 
 
-def _evaluate_temperature() -> tuple[float | None, str]:
+def _evaluate_temperature(time: datetime | None) -> tuple[float | None, str]:
     """Fetch actual surface temperature and evaluate against thresholds."""
     try:
-        from app.services.model_field_service import get_model_field
+        if time is None:
+            raise ValueError("Model timestamp unavailable")
+
+        from app.services.model_service import get_model_field
 
         temp_data = get_model_field(
-            variable="temperature", depth=0, time=MODEL_TIMESTAMP, max_points=500
+            variable="temperature", depth=0, time=time, max_points=500
         )
 
         if not temp_data.points:

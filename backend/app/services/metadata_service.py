@@ -33,12 +33,14 @@ def get_metadata() -> MetadataResponse:
                     "salinity": "so",
                     "u_current": "uo",
                     "v_current": "vo",
+                    "sea_surface_height": "zos",
                 },
                 variable_units={
                     "temperature": "degrees_C (already Celsius; no Kelvin conversion)",
                     "salinity": "PSU",
                     "u_current": "m/s",
                     "v_current": "m/s",
+                    "sea_surface_height": "m",
                 },
                 spatial_coverage=SpatialCoverage(
                     latitude_min=-30.0,
